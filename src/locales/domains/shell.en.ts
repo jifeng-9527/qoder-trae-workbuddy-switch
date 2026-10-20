@@ -253,6 +253,10 @@ export const en = {
   "unifiedGateway.err.oldPort.title": "Namespace prefix on the old port",
   "unifiedGateway.err.oldPort.body": "The model name wb-cn:deepseek-v4.1-flash looks like a unified gateway namespace prefix,\nbut this port (57891) does not parse namespaces. Use the unified gateway at http://127.0.0.1:57892/v1,\nor drop the prefix and use cn: / global: instead.",
   "unifiedGateway.notEnabled": "Currently disabled: settings below are still saved and take effect once enabled; nothing is listening right now.",
+  "unifiedGateway.listening": "Listening",
+  "unifiedGateway.notListening": "Not listening",
+  "unifiedGateway.listeningHint": "Something is accepting connections on this port, so clients can connect now.",
+  "unifiedGateway.notListeningHint": "The config is enabled but nothing is listening. Toggle the switch off and on again, or restart the app.",
   "unifiedGateway.addr": "Base URL",
   "unifiedGateway.copyBaseUrl": "Copy base URL",
   "unifiedGateway.loopback": "Loopback 127.0.0.1",
@@ -368,6 +372,12 @@ export const en = {
   "settings.logs.emptyBody":
     "This section only holds this tool's settings and backup entries; WorkBuddy's own runtime logs live in a logs subdirectory of its data dir (not surfaced here yet).",
   "settings.logs.emptyAction": "Open gateway settings",
+
+  // ---- Scope visibility (app-settings.tsx) ----
+  "appSettings.scopeVisibility.groupTitle": "Scope Visibility",
+  "appSettings.scopeVisibility.toggleAria": "Toggle visibility for {scope}",
+  "appSettings.scopeVisibility.hint": "Hidden scopes disappear from the top bar and shortcuts; direct URLs remain accessible.",
+  "appSettings.scopeVisibility.onlyOneLeft": "Only one scope left visible — cannot hide more",
 
   // ---- Shared fallbacks ----
   "common.unknownError": "Unknown error",

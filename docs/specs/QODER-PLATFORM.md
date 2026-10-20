@@ -71,13 +71,13 @@
 
 | 能力 | 有 | 说明 |
 |:---|:---:|:---|
-| 每日签到领积分 | ✅ | 「每日领取 **100 Credits**」，由网关直接领取；活动幂等（已领返回 `replayed`） |
+| 每日签到领积分 | ✅ | 走**活动平台**：`GET /sash/api/v1/me/campaigns` → 筛 `CLAIM_BENEFIT` + `CLAIMABLE` → 逐个 `POST …/{id}/claim`，累加 Credits；已领 ⇒ 幂等「今日已领」。旧 `/sash/daily-check-in` 只在**整区没有活动平台**（404/405/410）时兜底。三档语义不变：**没有积分类活动 ⇒ 未开放（`ok:false` + `disabled`）**，不谎报成功。⚠️ 真机未复验（本仓无 Qoder 账号），当前只有协议级单测 + `#[ignore]` 探针（`live_campaigns_probe`） |
 | 积分 / 额度查询 | ✅ | quota/usage + 套餐快照 |
-| Pro 福利包 | ✅ | 资格检查 + 领取（独立于每日签到） |
+| Pro 福利包 | ❌ | **未实现**：`PATH_PRO_CLAIM` 只有常量定义、零调用点（issue #58 第 1 阶段一并落地） |
 | OAuth 设备授权 | ✅ | **PKCE S256**；两区 URL 参数不同（国内带 `redirect_uri`，国际不带） |
 | PAT 导入 | ✅ | 前缀 `pt-`，导入后自动交换 jobToken |
 | API 网关 | ✅ | OpenAI 兼容（Chat Completions / Responses）+ **Anthropic 兼容**（`/v1/messages`） |
-| 定时调度 | ✅ | 整点排程：签到 + 令牌保活 |
+| 定时调度 | ✅ | `ScheduleTask::{QoderCheckin, QoderKeepalive}`：逐账号**顺序**执行（并发会踩风控）。判据与 Trae 两条同源 —— 签到默认**关**（替用户去领东西，opt-in），保活默认**开**（维持用户交出来的 `refresh_token`）；入口在 Qoder 设置页「计划任务」 |
 | 会话复制 | ❌ | **不实现** —— 会话复制依赖客户端自身的会话存储与云端归属，当前只有 WorkBuddy 桌面具备 |
 | 自动旅行 | ❌ | WorkBuddy 独有 |
 

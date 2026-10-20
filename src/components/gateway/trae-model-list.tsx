@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CatalogSourceBar } from "@/components/gateway/catalog-source-bar";
+import { ContextSourceCard } from "@/components/gateway/context-source-card";
 import { ModelTable } from "@/components/gateway/model-table";
 import { DemoAction } from "@/components/demo-action";
 import { TraeVariantMark } from "@/components/product-marks";
@@ -90,6 +91,8 @@ export function TraeModelList({
   defaultModel,
   refreshing,
   onRefresh,
+  maxMode,
+  onToggleMaxMode,
   className,
 }: {
   /**
@@ -105,6 +108,9 @@ export function TraeModelList({
   defaultModel: string;
   refreshing: boolean;
   onRefresh: () => void | Promise<void>;
+  /** Max Mode 是否开启（与网关配置同源）。 */
+  maxMode: boolean;
+  onToggleMaxMode: (checked: boolean) => void;
   className?: string;
 }) {
   const t = useT();
@@ -161,11 +167,17 @@ export function TraeModelList({
           // 上游状态：∈ 网关对外清单即可服务；清单未取到（null）时不谎称「不可用」。
           available: servableNames ? servableNames.has(model.name) : true,
           disabled: disabledSet.has(id),
+          // 本地按开关选档：点开关立刻变，不等后端重取。
+          context_window: (() => {
+            const windows = active?.gatewayContexts?.[model.name];
+            if (!windows) return null;
+            return maxMode ? (windows.max ?? windows.dev) : windows.dev;
+          })(),
         });
       }
     }
     return out;
-  }, [data, servableNames, disabledSet, scope]);
+  }, [data, servableNames, active, disabledSet, scope, maxMode]);
 
   const { served, total } = servedCount(rows);
   const loaded = data?.source === "client-cache" && total > 0;
@@ -173,6 +185,7 @@ export function TraeModelList({
 
   const labels = {
     colModel: t("shared.gateway.models.colModel"),
+    colContext: t("shared.gateway.models.colContext"),
     colUpstream: t("shared.gateway.models.colUpstream"),
     colExposed: t("shared.gateway.models.colExposed"),
     upstreamAvailable: t("shared.gateway.models.upstreamAvailable"),
@@ -224,6 +237,14 @@ export function TraeModelList({
 
   return (
     <div className={cn(className)}>
+      {/* 与 WB / Qoder 同一位置、同一形态：模型页顶部一个上下文开关（Trae 叫 Max Mode）。 */}
+      <ContextSourceCard
+        checked={maxMode}
+        onChange={onToggleMaxMode}
+        title={t("trae.stats.api.gateway.maxMode")}
+        description={t("trae.stats.api.gateway.maxModeDesc")}
+      />
+
       {/* 工具条（无卡头）：程序位选择是**取数参数**（见头部文档「为什么卡上要有一个程序位选择器」），
           摘要随行 —— 与来源条 / `KeysBar` 同一套 `cat-bar` 表面（`bg-muted` + 圆角 + 10px/12px 内距）。 */}
       <div className="mb-3 flex flex-wrap items-center gap-2.5 rounded-[10px] bg-muted px-3 py-2.5">

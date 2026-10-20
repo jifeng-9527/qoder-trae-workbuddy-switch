@@ -193,15 +193,18 @@ flowchart TB
 
 **3 つの不変ルール**：データは常にローカル、認証情報はクライアントのログイン状態に書き込むだけ（代理ログインや上流プロトコルの改変はしない）、書き込み前には必ずバックアップ。
 
-## 3 つの形態
+## 4 つの形態
 
 | 形態 | 入手方法 | 説明 |
 | --- | --- | --- |
 | **デスクトップアプリ** | [GitHub Releases](https://github.com/NextAgentX/qoder-trae-workbuddy-switch/releases/latest) からインストーラーを取得 | Tauri 製。日常利用に推奨 |
 | **webui** | ソースからビルド（下記） | デスクトップ版と同じフロントエンド成果物をローカル HTTP で配信 |
+| **Docker** | ビルド済みイメージ `ghcr.io/nextagentx/buddy-switch`（amd64 / arm64）を取得 | コンテナ内で動くのは **headless サーバー**（webui + API ゲートウェイ）で、デスクトップ版の切り替え機能は**ありません**。詳細は [Docker でのデプロイ](docs/guides/DOCKER.md) |
 | **オンラインデモ** | [GitHub Pages](https://nextagentx.github.io/qoder-trae-workbuddy-switch/) | 読み取り専用。アカウントや利用量はすべて架空のデータ |
 
 > npm パッケージは未公開のため `npm i -g` ではインストールできません。webui は下記のソースビルドをご利用ください。
+>
+> Docker 形態は**サーバーのみ**です。クライアントのログイン状態の切り替え、クライアントの起動、トレイ、フローティングウィンドウは**同じマシン上の GUI クライアント**が前提のため、コンテナ内では一切使えません。
 
 ## クイックスタート
 
@@ -400,8 +403,17 @@ src/                     # フロントエンド：components / pages / lib / lo
 npm/                     # npm パッケージ（未公開）
 ```
 
-環境要件・リリース手順・構成の規約は [docs/guides/DEVELOPMENT.md](docs/guides/DEVELOPMENT.md) を参照してください。
-**ドキュメント全体の索引は [docs/README.md](docs/README.md)** にあります（ガイド / 現行仕様 / 読み取り専用の履歴 / プロトタイプ）。
+## ドキュメント
+
+全体の索引は [docs/README.md](docs/README.md) にあります（ガイド / 現行仕様 / 読み取り専用の履歴 / プロトタイプ）。よく参照するもの:
+
+| ドキュメント | 内容 |
+| --- | --- |
+| [guides/DEVELOPMENT.md](docs/guides/DEVELOPMENT.md) | 環境要件・ローカル開発・ゲート一覧・リリース手順・構成の規約 |
+| [guides/DOCKER.md](docs/guides/DOCKER.md) | コンテナでのデプロイ: ビルド済みイメージ / ソースからのビルド、ポートとセキュリティ、トラブルシューティング |
+| [guides/GATEWAY-CLIENT-INTEGRATION.md](docs/guides/GATEWAY-CLIENT-INTEGRATION.md) | Codex / Claude Code などのクライアントをローカルゲートウェイに接続する |
+| [specs/](docs/specs/) | 現行のアーキテクチャと決定（コードを変える前に読む） |
+| [policies/](docs/policies/) | ライセンスと免責事項 |
 
 ## コントリビューション
 

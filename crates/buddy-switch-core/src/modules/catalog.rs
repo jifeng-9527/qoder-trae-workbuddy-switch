@@ -38,8 +38,14 @@ pub struct CatalogModel {
     pub id: String,
     /// 展示名。
     pub name: String,
-    /// 上下文窗口。
+    /// 上下文窗口（**上限**：上游 `maxInputTokens` / `maxAllowedSize`）。
     pub context_window: u64,
+    /// 上下文窗口的**默认值**（上游 `contextWindow.defaultLength`）；没有则为 `None`。
+    ///
+    /// ★ 上游给的是「默认 / 上限」两档（如 300k 默认、1M 上限），清单要按开关选一个声明。
+    /// 旧缓存没有这个键 ⇒ `None`（等价于「没有默认档，上限即默认」）。
+    #[serde(default)]
+    pub context_window_default: Option<u64>,
     /// 最大输出 token。
     pub max_tokens: u64,
     /// 是否支持图片输入。
@@ -50,6 +56,17 @@ pub struct CatalogModel {
     pub badges: Vec<String>,
     /// 当前是否免费。
     pub free: bool,
+}
+
+impl CatalogModel {
+    /// 按策略选声明/使用的窗口：`true` ⇒ 上限档，`false` ⇒ 默认档（没有默认档回落到上限）。
+    pub fn effective_window(&self, max_context: bool) -> u64 {
+        if max_context {
+            self.context_window
+        } else {
+            self.context_window_default.unwrap_or(self.context_window)
+        }
+    }
 }
 
 /// 一次目录快照。
@@ -70,10 +87,21 @@ pub struct CatalogSnapshot {
 /// 落盘格式。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct CachedCatalog {
+    /// 缓存格式版本。**加字段就 +1**：老文件缺这个键（= 0）会被当作「过期格式」丢弃，
+    /// 让下一次取数回落到内置目录 / 重新识别，而不是把旧语义（如「窗口只有默认档」）继续喂给界面。
+    #[serde(default)]
+    version: u32,
     region: Region,
     fetched_at: i64,
     models: Vec<CatalogModel>,
 }
+
+/// 当前缓存格式版本（v2：`CatalogModel.context_window_default` 引入）。
+///
+/// 为什么要版本化而不是「缺键就当 None」：旧缓存的 `context_window` 存的是**默认档**
+/// （国际版曾直接把 `defaultLength` 当窗口），缺键补 `None` 会让界面永远显示 300k，
+/// 用户会以为「开关没生效」。版本不匹配 ⇒ 整份丢弃。
+const CACHE_VERSION: u32 = 2;
 
 /// ★ 契约（P10 §1.3 规则 2）：**非 live 快照的 `note` 恒非空**。
 ///
@@ -159,6 +187,7 @@ pub static FALLBACK_CN_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             id: "auto".into(),
             name: "Auto".into(),
             context_window: 168_000,
+            context_window_default: None,
             max_tokens: 32_000,
             supports_images: true,
             credits: None,
@@ -169,6 +198,7 @@ pub static FALLBACK_CN_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             id: "hy4-preview".into(),
             name: "Hy4 preview".into(),
             context_window: 1_000_000,
+            context_window_default: None,
             max_tokens: 64_000,
             supports_images: true,
             credits: None,
@@ -179,6 +209,7 @@ pub static FALLBACK_CN_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             id: "hy3".into(),
             name: "Hy3".into(),
             context_window: 192_000,
+            context_window_default: None,
             max_tokens: 64_000,
             supports_images: true,
             credits: None,
@@ -189,6 +220,7 @@ pub static FALLBACK_CN_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             id: "hy3-x".into(),
             name: "Hy3".into(),
             context_window: 192_000,
+            context_window_default: None,
             max_tokens: 64_000,
             supports_images: true,
             credits: Some("x0.05".into()),
@@ -199,6 +231,7 @@ pub static FALLBACK_CN_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             id: "deepseek-v4.1-flash".into(),
             name: "Deepseek-V4.1-Flash".into(),
             context_window: 1_000_000,
+            context_window_default: None,
             max_tokens: 128_000,
             supports_images: true,
             credits: Some("x0.03 credits".into()),
@@ -209,6 +242,7 @@ pub static FALLBACK_CN_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             id: "glm-5.3".into(),
             name: "GLM-5.3".into(),
             context_window: 1_000_000,
+            context_window_default: None,
             max_tokens: 48_000,
             supports_images: true,
             credits: Some("x0.79".into()),
@@ -219,6 +253,7 @@ pub static FALLBACK_CN_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             id: "glm-5.3-flash".into(),
             name: "GLM-5.3-Flash".into(),
             context_window: 1_000_000,
+            context_window_default: None,
             max_tokens: 32_000,
             supports_images: true,
             credits: Some("x0.06".into()),
@@ -229,6 +264,7 @@ pub static FALLBACK_CN_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             id: "glm-5.2".into(),
             name: "GLM-5.2".into(),
             context_window: 1_000_000,
+            context_window_default: None,
             max_tokens: 48_000,
             supports_images: true,
             credits: Some("x0.79 credits".into()),
@@ -239,6 +275,7 @@ pub static FALLBACK_CN_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             id: "glm-5.1".into(),
             name: "GLM-5.1".into(),
             context_window: 200_000,
+            context_window_default: None,
             max_tokens: 48_000,
             supports_images: false,
             credits: Some("x0.79 credits".into()),
@@ -249,6 +286,7 @@ pub static FALLBACK_CN_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             id: "glm-5v-turbo".into(),
             name: "GLM-5v-Turbo".into(),
             context_window: 200_000,
+            context_window_default: None,
             max_tokens: 64_000,
             supports_images: true,
             credits: Some("x0.71 credits".into()),
@@ -259,6 +297,7 @@ pub static FALLBACK_CN_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             id: "kimi-k3-1".into(),
             name: "Kimi-K3".into(),
             context_window: 1_000_000,
+            context_window_default: None,
             max_tokens: 32_000,
             supports_images: true,
             credits: Some("x1.62 credits".into()),
@@ -269,6 +308,7 @@ pub static FALLBACK_CN_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             id: "kimi-k2.8-preview".into(),
             name: "Kimi-K2.8-Preview".into(),
             context_window: 1_000_000,
+            context_window_default: None,
             max_tokens: 32_000,
             supports_images: true,
             credits: Some("x0.77 credits".into()),
@@ -279,6 +319,7 @@ pub static FALLBACK_CN_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             id: "kimi-k2.7".into(),
             name: "Kimi-K2.7-Code".into(),
             context_window: 256_000,
+            context_window_default: None,
             max_tokens: 32_000,
             supports_images: true,
             credits: Some("x0.57 credits".into()),
@@ -289,6 +330,7 @@ pub static FALLBACK_CN_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             id: "kimi-k2.6".into(),
             name: "Kimi-K2.6".into(),
             context_window: 256_000,
+            context_window_default: None,
             max_tokens: 32_000,
             supports_images: true,
             credits: Some("x0.52 credits".into()),
@@ -299,6 +341,7 @@ pub static FALLBACK_CN_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             id: "minimax-m3".into(),
             name: "MiniMax-M3".into(),
             context_window: 512_000,
+            context_window_default: None,
             max_tokens: 128_000,
             supports_images: true,
             credits: Some("x0.25 credits".into()),
@@ -309,6 +352,7 @@ pub static FALLBACK_CN_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             id: "deepseek-v4-pro".into(),
             name: "Deepseek-V4-Pro".into(),
             context_window: 1_000_000,
+            context_window_default: None,
             max_tokens: 50_000,
             supports_images: true,
             credits: Some("x0.51 credits".into()),
@@ -327,6 +371,7 @@ pub static FALLBACK_GLOBAL_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|
             id: "default-model".into(),
             name: "Auto".into(),
             context_window: 176_000,
+            context_window_default: None,
             max_tokens: 24_000,
             supports_images: true,
             credits: None,
@@ -337,9 +382,10 @@ pub static FALLBACK_GLOBAL_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|
             id: "fast-model".into(),
             name: "Fast".into(),
             context_window: 200_000,
+            context_window_default: None,
             max_tokens: 32_000,
             supports_images: true,
-            credits: Some("x0.34".into()),
+            credits: Some("x0.34 credits".into()),
             badges: Vec::new(),
             free: false,
         },
@@ -347,9 +393,10 @@ pub static FALLBACK_GLOBAL_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|
             id: "balanced-model".into(),
             name: "Balanced".into(),
             context_window: 256_000,
+            context_window_default: None,
             max_tokens: 32_000,
             supports_images: true,
-            credits: Some("x0.59".into()),
+            credits: Some("x0.59 credits".into()),
             badges: Vec::new(),
             free: false,
         },
@@ -357,29 +404,43 @@ pub static FALLBACK_GLOBAL_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|
             id: "primary-model".into(),
             name: "Primary".into(),
             context_window: 272_000,
+            context_window_default: None,
             max_tokens: 72_000,
             supports_images: true,
-            credits: Some("x3.31".into()),
+            credits: Some("x3.31 credits".into()),
             badges: Vec::new(),
             free: false,
         },
         CatalogModel {
-            id: "deep-model".into(),
-            name: "Deep".into(),
-            context_window: 176_000,
-            max_tokens: 24_000,
+            id: "deepseek-v4.1-flash".into(),
+            name: "Deepseek-V4.1-Flash".into(),
+            context_window: 1_000_000,
+            context_window_default: Some(300_000),
+            max_tokens: 128_000,
             supports_images: true,
-            credits: Some("x3.33".into()),
+            credits: Some("x0.00".into()),
+            badges: Vec::new(),
+            free: true,
+        },
+        CatalogModel {
+            id: "deepseek-v4.1-flash-sg".into(),
+            name: "Deepseek-V4.1-Flash".into(),
+            context_window: 1_000_000,
+            context_window_default: Some(300_000),
+            max_tokens: 128_000,
+            supports_images: true,
+            credits: Some("x0.03".into()),
             badges: Vec::new(),
             free: false,
         },
         CatalogModel {
-            id: "hy4-preview-f".into(),
+            id: "hy4-preview".into(),
             name: "Hy4 preview".into(),
-            context_window: 300_000,
+            context_window: 1_000_000,
+            context_window_default: Some(200_000),
             max_tokens: 64_000,
             supports_images: true,
-            credits: None,
+            credits: Some("x0.29".into()),
             badges: Vec::new(),
             free: false,
         },
@@ -387,29 +448,21 @@ pub static FALLBACK_GLOBAL_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|
             id: "hy3".into(),
             name: "Hy3".into(),
             context_window: 192_000,
+            context_window_default: None,
             max_tokens: 64_000,
             supports_images: true,
-            credits: None,
+            credits: Some("x0.00".into()),
             badges: Vec::new(),
-            free: false,
+            free: true,
         },
         CatalogModel {
-            id: "deepseek-v4.1-flash".into(),
-            name: "Deepseek-V4.1-Flash".into(),
-            context_window: 300_000,
-            max_tokens: 128_000,
+            id: "kimi-k2.8-preview".into(),
+            name: "Kimi-K2.8-Preview".into(),
+            context_window: 1_000_000,
+            context_window_default: Some(300_000),
+            max_tokens: 32_000,
             supports_images: true,
-            credits: None,
-            badges: Vec::new(),
-            free: false,
-        },
-        CatalogModel {
-            id: "gpt-6-astra".into(),
-            name: "GPT-6-Astra".into(),
-            context_window: 400_000,
-            max_tokens: 128_000,
-            supports_images: true,
-            credits: Some("x6.67".into()),
+            credits: Some("x0.77".into()),
             badges: Vec::new(),
             free: false,
         },
@@ -417,6 +470,7 @@ pub static FALLBACK_GLOBAL_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|
             id: "gpt-5.6-sol".into(),
             name: "GPT-5.6-Sol".into(),
             context_window: 1_000_000,
+            context_window_default: None,
             max_tokens: 128_000,
             supports_images: true,
             credits: Some("x3.47".into()),
@@ -427,6 +481,7 @@ pub static FALLBACK_GLOBAL_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|
             id: "gpt-5.6-terra".into(),
             name: "GPT-5.6-Terra".into(),
             context_window: 1_000_000,
+            context_window_default: None,
             max_tokens: 128_000,
             supports_images: true,
             credits: Some("x1.39".into()),
@@ -437,6 +492,7 @@ pub static FALLBACK_GLOBAL_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|
             id: "gpt-5.6-luna".into(),
             name: "GPT-5.6-Luna".into(),
             context_window: 1_000_000,
+            context_window_default: None,
             max_tokens: 128_000,
             supports_images: true,
             credits: Some("x0.14".into()),
@@ -447,6 +503,7 @@ pub static FALLBACK_GLOBAL_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|
             id: "gpt-5.5".into(),
             name: "GPT-5.5".into(),
             context_window: 1_000_000,
+            context_window_default: None,
             max_tokens: 128_000,
             supports_images: true,
             credits: Some("x3.31".into()),
@@ -457,6 +514,7 @@ pub static FALLBACK_GLOBAL_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|
             id: "gpt-5.4".into(),
             name: "GPT-5.4".into(),
             context_window: 272_000,
+            context_window_default: None,
             max_tokens: 72_000,
             supports_images: true,
             credits: Some("x1.65".into()),
@@ -464,19 +522,10 @@ pub static FALLBACK_GLOBAL_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|
             free: false,
         },
         CatalogModel {
-            id: "gpt-5.3-codex".into(),
-            name: "GPT-5.3-Codex".into(),
-            context_window: 272_000,
-            max_tokens: 72_000,
-            supports_images: true,
-            credits: Some("x1.25".into()),
-            badges: Vec::new(),
-            free: false,
-        },
-        CatalogModel {
             id: "gemini-3.5-flash".into(),
             name: "Gemini-3.5-Flash".into(),
             context_window: 1_000_000,
+            context_window_default: None,
             max_tokens: 65_536,
             supports_images: true,
             credits: Some("x0.99".into()),
@@ -484,12 +533,35 @@ pub static FALLBACK_GLOBAL_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|
             free: false,
         },
         CatalogModel {
+            id: "gpt-6-astra".into(),
+            name: "GPT-6-Astra".into(),
+            context_window: 1_000_000,
+            context_window_default: Some(400_000),
+            max_tokens: 128_000,
+            supports_images: true,
+            credits: Some("x6.67".into()),
+            badges: Vec::new(),
+            free: false,
+        },
+        CatalogModel {
+            id: "glm-5.3-flash".into(),
+            name: "GLM-5.3-Flash".into(),
+            context_window: 1_000_000,
+            context_window_default: Some(300_000),
+            max_tokens: 32_000,
+            supports_images: true,
+            credits: Some("x0.08".into()),
+            badges: Vec::new(),
+            free: false,
+        },
+        CatalogModel {
             id: "glm-5.3".into(),
             name: "GLM-5.3".into(),
             context_window: 1_000_000,
+            context_window_default: None,
             max_tokens: 48_000,
             supports_images: true,
-            credits: Some("x0.79".into()),
+            credits: Some("x0.69".into()),
             badges: Vec::new(),
             free: false,
         },
@@ -497,6 +569,7 @@ pub static FALLBACK_GLOBAL_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|
             id: "glm-5.2".into(),
             name: "GLM-5.2".into(),
             context_window: 1_000_000,
+            context_window_default: None,
             max_tokens: 48_000,
             supports_images: true,
             credits: Some("x0.79".into()),
@@ -504,9 +577,21 @@ pub static FALLBACK_GLOBAL_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|
             free: false,
         },
         CatalogModel {
+            id: "minimax-m3.1-flash".into(),
+            name: "MiniMax-M3.1-Flash".into(),
+            context_window: 1_000_000,
+            context_window_default: Some(300_000),
+            max_tokens: 128_000,
+            supports_images: true,
+            credits: Some("x0.08".into()),
+            badges: Vec::new(),
+            free: false,
+        },
+        CatalogModel {
             id: "kimi-k3".into(),
             name: "Kimi-K3".into(),
             context_window: 1_000_000,
+            context_window_default: None,
             max_tokens: 32_000,
             supports_images: true,
             credits: Some("x1.62".into()),
@@ -517,11 +602,78 @@ pub static FALLBACK_GLOBAL_MODELS: LazyLock<Vec<CatalogModel>> = LazyLock::new(|
             id: "kimi-k2.6".into(),
             name: "Kimi-K2.6".into(),
             context_window: 256_000,
+            context_window_default: None,
             max_tokens: 32_000,
             supports_images: true,
             credits: Some("x0.52".into()),
             badges: Vec::new(),
             free: false,
+        },
+        CatalogModel {
+            id: "grok-4.7".into(),
+            name: "Grok-4.7".into(),
+            context_window: 500_000,
+            context_window_default: Some(200_000),
+            max_tokens: 128_000,
+            supports_images: true,
+            credits: Some("x1.90".into()),
+            badges: Vec::new(),
+            free: false,
+        },
+        CatalogModel {
+            id: "gpt-6-sol".into(),
+            name: "GPT-6-Sol".into(),
+            context_window: 1_000_000,
+            context_window_default: None,
+            max_tokens: 128_000,
+            supports_images: true,
+            credits: Some("x1.33".into()),
+            badges: Vec::new(),
+            free: false,
+        },
+        CatalogModel {
+            id: "gemini-3.8-flash".into(),
+            name: "Gemini-3.8-Flash".into(),
+            context_window: 1_000_000,
+            context_window_default: Some(300_000),
+            max_tokens: 65_536,
+            supports_images: true,
+            credits: Some("x0.95".into()),
+            badges: Vec::new(),
+            free: false,
+        },
+        CatalogModel {
+            id: "gpt-6-luna".into(),
+            name: "GPT-6-Luna".into(),
+            context_window: 1_000_000,
+            context_window_default: None,
+            max_tokens: 128_000,
+            supports_images: true,
+            credits: Some("x0.07".into()),
+            badges: Vec::new(),
+            free: false,
+        },
+        CatalogModel {
+            id: "gpt-6.1-sol".into(),
+            name: "GPT-6.1-Sol".into(),
+            context_window: 1_000_000,
+            context_window_default: Some(272_000),
+            max_tokens: 128_000,
+            supports_images: true,
+            credits: Some("x1.33".into()),
+            badges: Vec::new(),
+            free: false,
+        },
+        CatalogModel {
+            id: "step-5-preview".into(),
+            name: "Step-5-Preview".into(),
+            context_window: 1_000_000,
+            context_window_default: Some(300_000),
+            max_tokens: 64_000,
+            supports_images: true,
+            credits: Some("x0.00".into()),
+            badges: Vec::new(),
+            free: true,
         },
     ]
 });
@@ -675,7 +827,7 @@ impl CatalogStore {
         let path = self.cache_file(region);
         let text = std::fs::read_to_string(&path).ok()?;
         let cached: CachedCatalog = serde_json::from_str(&text).ok()?;
-        if cached.models.is_empty() {
+        if cached.models.is_empty() || cached.version != CACHE_VERSION {
             return None;
         }
         Some(with_reason(
@@ -695,6 +847,7 @@ impl CatalogStore {
             let _ = std::fs::create_dir_all(parent);
         }
         let cached = CachedCatalog {
+            version: CACHE_VERSION,
             region: snapshot.region,
             fetched_at: snapshot.fetched_at.unwrap_or_else(now_ms),
             models: snapshot.models.clone(),
@@ -765,34 +918,42 @@ mod tests {
             "minimax-m3",
             "deepseek-v4-pro",
         ];
-        const GLOBAL_IDS: [&str; 20] = [
+        const GLOBAL_IDS: [&str; 28] = [
             "default-model",
             "fast-model",
             "balanced-model",
             "primary-model",
-            "deep-model",
-            "hy4-preview-f",
-            "hy3",
             "deepseek-v4.1-flash",
-            "gpt-6-astra",
+            "deepseek-v4.1-flash-sg",
+            "hy4-preview",
+            "hy3",
+            "kimi-k2.8-preview",
             "gpt-5.6-sol",
             "gpt-5.6-terra",
             "gpt-5.6-luna",
             "gpt-5.5",
             "gpt-5.4",
-            "gpt-5.3-codex",
             "gemini-3.5-flash",
+            "gpt-6-astra",
+            "glm-5.3-flash",
             "glm-5.3",
             "glm-5.2",
+            "minimax-m3.1-flash",
             "kimi-k3",
             "kimi-k2.6",
+            "grok-4.7",
+            "gpt-6-sol",
+            "gemini-3.8-flash",
+            "gpt-6-luna",
+            "gpt-6.1-sol",
+            "step-5-preview",
         ];
 
         let cn = CatalogStore::fallback_models(Region::Cn);
         let global = CatalogStore::fallback_models(Region::Global);
 
         assert_eq!(FALLBACK_CN_MODELS.len(), 16);
-        assert_eq!(FALLBACK_GLOBAL_MODELS.len(), 20);
+        assert_eq!(FALLBACK_GLOBAL_MODELS.len(), 28);
         assert_eq!(cn[0].id, "auto");
         assert_eq!(global[0].id, "default-model");
 
@@ -826,6 +987,7 @@ mod tests {
             id: "cached-model".into(),
             name: "Cached".into(),
             context_window: 1,
+            context_window_default: None,
             max_tokens: 1,
             supports_images: false,
             credits: None,
@@ -833,6 +995,7 @@ mod tests {
             free: false,
         }];
         let cached_doc = json!({
+            "version": 2,
             "region": "cn",
             "fetched_at": 42,
             "models": cached_models,
@@ -855,6 +1018,7 @@ mod tests {
                 id: "live-model".into(),
                 name: "Live".into(),
                 context_window: 2,
+                context_window_default: None,
                 max_tokens: 2,
                 supports_images: true,
                 credits: Some("x0.10".into()),
@@ -889,6 +1053,7 @@ mod tests {
             id: id.into(),
             name: id.into(),
             context_window: 1,
+            context_window_default: None,
             max_tokens: 1,
             supports_images: false,
             credits: None,
@@ -933,6 +1098,7 @@ mod tests {
 
         // ② 有缓存 → 已保存：必须带原因（这正是 `load_cached` 此前置 `None` 的缺口）。
         let cached_doc = json!({
+            "version": 2,
             "region": "cn",
             "fetched_at": 42,
             "models": [sample_model("cached-model")],

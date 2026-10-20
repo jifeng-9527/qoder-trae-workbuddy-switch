@@ -816,6 +816,8 @@ export interface TraeGatewayConfigRaw {
    * 漏带这一格会让用户手开的抓取在任意一次「保存」后被**静默关掉**。
    */
   capture_enabled: boolean;
+  /** Max Mode：对「目录里 max > dev」的模型注入 is_max_mode（默认 true）。 */
+  max_mode: boolean;
 }
 
 /** 归一化后的网关配置（前端统一用 camelCase）。 */
@@ -835,6 +837,8 @@ export interface TraeGatewayConfig {
   stickyTtlMs: number;
   /** 对话转发抓取开关（诊断旁路；无界面开关，只在配置里往返，默认 `false`）。 */
   captureEnabled: boolean;
+  /** Max Mode：按官方目录逐模型注入 `is_max_mode`（默认开启）。 */
+  maxMode: boolean;
 }
 
 /** 账号池摘要（`pool` 字段）。 */
@@ -957,6 +961,11 @@ export interface TraeModelSource {
   /** 该程序位的客户端清单；未取到（后端不可用）为 `null`。 */
   data: TraeClientModelList | null;
   /**
+   * 该程序位**网关对外清单**的逐模型上下文（`/v1/models` 的 `context_length`）。
+   * 数字来自官方模型目录，逐模型不同（不是统一 1M）；未取到为 `null`。
+   */
+  gatewayContexts?: Record<string, { dev: number | null; max: number | null }> | null;
+  /**
    * 该程序位下**网关对外清单**的模型 id（`get_trae_gateway_models(variant)`）。
    *
    * 与 `data` 口径不同：`data` 是该客户端的**全部**分组（同一模型会在多个分组里重复出现），
@@ -990,6 +999,8 @@ export interface TraeClientModel {
   isBeta: boolean;
   /** 默认上下文窗口；取不到为 `null`。 */
   contextWindow: number | null;
+  /** 上限上下文窗口（`context_window_size.max`，Max Mode 口径）；取不到为 `null`。 */
+  contextWindowMax?: number | null;
   /** 单次回复上限；取不到为 `null`。 */
   promptMaxTokens: number | null;
 }

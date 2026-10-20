@@ -100,6 +100,10 @@ export const zh = {
      ⚠️ 「上游状态」列只可能在 Trae 侧出现（WB 的 `available` 恒 true ⇒ 不渲染该列，决策 #3），
         但文案仍放共享域：它是**共用壳**的一部分，由调用方按 `showUpstream` 决定是否渲染。 */
   "shared.gateway.models.colModel": "模型",
+  "shared.gateway.models.colContext": "上下文",
+  "shared.gateway.models.contextTitle": "上下文上限",
+  "shared.gateway.models.contextFixedDesc": "开启：清单与请求使用上游的上限窗口（如 1M）；关闭：回到默认窗口（如 300k）。数字来自官方目录，不是写死的 1M。",
+  "shared.gateway.models.contextFromCatalog": "按目录声明",
   "shared.gateway.models.colUpstream": "上游状态",
   "shared.gateway.models.colExposed": "网关暴露",
   "shared.gateway.models.upstreamAvailable": "可用",
@@ -690,6 +694,9 @@ export const zh = {
   "shared.checkinResult.retryFailed": "重试失败项",
   "shared.checkinResult.summary4": "成功 {ok} · 未开放 {skip} · 失败 {fail}",
   "shared.checkinResult.skippedNames": "以下账号的签到通道未开放（桌面端网页活动页才可领）：{names}",
+  // 本次真领到的额度合计（活动通道）。**可选**：不传时结果条不显示这一枚徽标，
+  // WB / Trae 的渲染逐字不变（它们没有活动通道，也不该凭空多一行）。
+  "shared.checkinResult.earned": "本次共 +{n} Credits",
   "shared.checkinResult.dismiss": "知道了",
   // 分组标题右侧的数量（原型 `.tiny muted`，`buddy-switch-prototype.html:2471`）。
   "shared.list.groupCount": "{n} 个",

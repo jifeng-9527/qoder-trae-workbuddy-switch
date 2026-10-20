@@ -499,19 +499,22 @@ impl ProbeTarget {
                         .map(str::to_string)
                 })
                 .collect(),
-            ProbeTarget::Trae(_, variant) => {
+            ProbeTarget::Trae(state, variant) => {
                 // 按**变体**读客户端（上游下发）清单 —— 所有账号共用同一份 ⇒ **全行同列**
                 // （方案 §1.1 的坑）。复用网关 `/v1/models` 的同一份选择逻辑
                 // （`models_response_for`：只取该变体 `function` 真能调的模型；客户端缓存
                 // 读不到时它自己回落静态清单），保证「探测的模型 == 网关会列的模型」。
+                // ★ Max Mode 不再有影子条目 ⇒ 探测与清单同源，无需再分岔。
                 //
                 // ⚠️ 读客户端 `state.vscdb` 是**同步阻塞** IO（网关 `/v1/models` 同样走
                 // `spawn_blocking`）⇒ 这里也搬进阻塞线程池，别卡住异步运行时。
                 let variant = *variant;
+                let max_mode = state.max_mode_now();
                 tokio::task::spawn_blocking(move || {
                     let body = trae_payload::models_response_for(
                         variant,
                         &std::collections::BTreeSet::new(),
+                        max_mode,
                     );
                     body.get("data")
                         .and_then(Value::as_array)
@@ -1102,7 +1105,7 @@ async fn probe_cell_qoder(
 
     // 模型元数据：清单里查不到 ⇒ 中性合成（与中继 `payload::meta_for` 同源）。
     let catalog = state.cached_catalog_models(region).await;
-    let meta = payload::meta_for(&catalog, model);
+    let meta = payload::meta_for(&catalog, model, state.max_context_now());
 
     // 最小请求体（`max_tokens: 1` + 探测文案）：与中继同一套构造。
     let payload_value = json!({

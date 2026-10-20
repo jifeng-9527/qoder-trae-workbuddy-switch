@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CatalogSourceBar } from "@/components/gateway/catalog-source-bar";
+import { ContextSourceCard } from "@/components/gateway/context-source-card";
 import { ModelTable } from "@/components/gateway/model-table";
 import { DemoAction } from "@/components/demo-action";
 import * as api from "@/lib/api";
@@ -51,6 +52,8 @@ export function QoderModelList({
   region,
   refreshing,
   onRefresh,
+  maxContext,
+  onToggleMaxContext,
   className,
 }: {
   catalog: QoderGatewayCatalog;
@@ -58,6 +61,9 @@ export function QoderModelList({
   region: Region;
   refreshing: boolean;
   onRefresh: () => void;
+  /** 是否声明上游**最大**上下文窗口（默认 true）。 */
+  maxContext: boolean;
+  onToggleMaxContext: (checked: boolean) => void;
   className?: string;
 }) {
   const t = useT();
@@ -85,13 +91,18 @@ export function QoderModelList({
         // Qoder 无「非可服务」概念：在清单里即可用（与 WB 同一判据，决策 #3）。
         available: true,
         disabled: disabledSet.has(model.id),
+        // 本地按开关选档：点开关立即变，不等重新取数。
+        context_window: maxContext
+          ? (model.contextMax ?? model.maxInputTokens)
+          : (model.contextDefault ?? model.maxInputTokens),
       })),
-    [catalog, disabledSet, scope],
+    [catalog, disabledSet, scope, maxContext],
   );
   const { served, total } = servedCount(rows);
 
   const labels = {
     colModel: t("shared.gateway.models.colModel"),
+    colContext: t("shared.gateway.models.colContext"),
     colUpstream: t("shared.gateway.models.colUpstream"),
     colExposed: t("shared.gateway.models.colExposed"),
     upstreamAvailable: t("shared.gateway.models.upstreamAvailable"),
@@ -157,6 +168,11 @@ export function QoderModelList({
     <div className={cn(className)}>
       {/* 无卡头 —— 分区名由左栏导航承担（与 WB / Trae 侧同口径）。 */}
       <p className="mb-3 text-xs text-muted-foreground">{t("qoder.gateway.models.note")}</p>
+
+      <ContextSourceCard
+        checked={maxContext}
+        onChange={(checked) => onToggleMaxContext(checked)}
+      />
 
       <CatalogSourceBar
         view={view}

@@ -222,19 +222,24 @@ export default function QoderApiServicePage() {
 
   async function persist(next: Partial<QoderGatewayConfig>) {
     const merged = { ...config, ...next };
+    // 乐观更新（与 Trae 同口径）：开关立刻跟手，失败回滚。
+    const previous = config;
+    patchSnapshot({ config: merged });
     setSaving(true);
     try {
       await api.saveQoderGatewayConfig(toQoderGatewayConfigRaw(merged));
-      patchSnapshot({ config: merged });
       // 保存会启动 / 重启监听，状态要重读（仍按当前作用域）。
       const statusRaw = await api.qoderGatewayStatus(scope);
       patchSnapshot({ status: normalizeQoderGatewayStatus(statusRaw) });
+      // 清单数字按开关选档 ⇒ 只有改开关才重取（不强制打上游，见 `refetchCatalog`）。
+      if (next.maxContext !== undefined) void refetchCatalog();
       toast.success(
         merged.enabled
           ? t("qoder.gateway.savedStarted")
           : t("qoder.gateway.savedDisabled"),
       );
     } catch (e) {
+      patchSnapshot({ config: previous });
       toast.error(t("qoder.gateway.saveFailed"), { description: api.asError(e) });
     } finally {
       setSaving(false);
@@ -278,6 +283,21 @@ export default function QoderApiServicePage() {
       toast.error(t("qoder.gateway.logsClearFailed"), { description: api.asError(e) });
     } finally {
       setClearing(false);
+    }
+  }
+
+  /**
+   * 断言式重取清单（**不强制打上游**）。
+   *
+   * 开关改的是「服务端按哪一档序列化」，不是数据本身 ⇒ 重新 GET 一次就够；
+   * 用 `force=true` 反而会在离线时把清单打空，用户看到「模型全没了」。
+   */
+  async function refetchCatalog() {
+    try {
+      const catalogRaw = await api.getQoderGatewayModels(scope, false);
+      patchSnapshot({ catalog: normalizeQoderGatewayCatalog(catalogRaw) });
+    } catch {
+      /* 读缓存失败：保留现有快照，不打断开关操作。 */
     }
   }
 
@@ -599,6 +619,8 @@ export default function QoderApiServicePage() {
                 region={region}
                 refreshing={refreshingModels}
                 onRefresh={() => void onRefreshModels()}
+                maxContext={config.maxContext}
+                onToggleMaxContext={(checked) => void persist({ maxContext: checked })}
               />
             </>
           )}

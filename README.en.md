@@ -193,15 +193,18 @@ flowchart TB
 
 **Three hard rules** hold everywhere: data stays on this machine, credentials are only written into client login state (no proxy login, no upstream protocol hacks), and every write is backed up first.
 
-## Three forms
+## Four forms
 
 | Form | How to get it | Notes |
 | --- | --- | --- |
 | **Desktop app** | Download from [GitHub Releases](https://github.com/NextAgentX/qoder-trae-workbuddy-switch/releases/latest) | Packaged with Tauri; recommended for daily use |
 | **webui** | Build from source (below) | Same frontend bundle as the desktop app, served over local HTTP |
+| **Docker** | Pull the prebuilt image `ghcr.io/nextagentx/buddy-switch` (amd64 / arm64) | The container runs the **headless server** (webui + API gateways), **not** the desktop switcher; see [Docker deployment](docs/guides/DOCKER.md) |
 | **Online demo** | [GitHub Pages](https://nextagentx.github.io/qoder-trae-workbuddy-switch/) | Read-only demo; accounts and usage are fictional |
 
 > The npm package is not published yet, so `npm i -g` will not install it; use the source build below for the webui form.
+>
+> The Docker form is **server-only**: switching client login state, launching the client, the tray and the floating window all need a **graphical client on the same machine**, so none of them work inside the container.
 
 ## Quick start
 
@@ -400,8 +403,17 @@ src/                     # frontend: components / pages / lib / locales
 npm/                     # npm packages (not published yet)
 ```
 
-Environment requirements, release process and layout conventions: [docs/guides/DEVELOPMENT.md](docs/guides/DEVELOPMENT.md).
-**Full document map: [docs/README.md](docs/README.md)** — split by lifecycle: guides / living specs / read-only history / prototype.
+## Docs
+
+The full index lives in [docs/README.md](docs/README.md) — split by lifecycle: guides / living specs / read-only history / prototype. The ones you will open most:
+
+| Document | What it covers |
+| --- | --- |
+| [guides/DEVELOPMENT.md](docs/guides/DEVELOPMENT.md) | Requirements, local development, gate list, release process, layout conventions |
+| [guides/DOCKER.md](docs/guides/DOCKER.md) | Container deployment: prebuilt image / source build, ports and security, troubleshooting |
+| [guides/GATEWAY-CLIENT-INTEGRATION.md](docs/guides/GATEWAY-CLIENT-INTEGRATION.md) | Wiring Codex / Claude Code / other clients to the local gateway |
+| [specs/](docs/specs/) | Living architecture and decisions (read before changing code) |
+| [policies/](docs/policies/) | License and disclaimer |
 
 ## Contributing
 

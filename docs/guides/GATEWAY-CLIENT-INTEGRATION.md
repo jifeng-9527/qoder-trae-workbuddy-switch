@@ -40,7 +40,7 @@
 | `POST /v1/chat/completions` | ✅ | ✅ | ✅ |
 | `POST /v1/messages`（Anthropic） | ✅ | ✅ | ✅ |
 | `POST /v1/responses`（Responses API） | ✅ | ❌ **没有** | ⚠️ 取决于命名空间：`wb-*` 可用，`trae-*` 返回 **501** |
-| 健康检查（免鉴权） | `GET /healthz` | `GET /health` | `GET /healthz` |
+| 健康检查（免鉴权） | `GET /health`（兼容 `/healthz`） | `GET /health`（兼容 `/healthz`） | `GET /health`（兼容 `/healthz`） |
 | `GET /status`（需鉴权） | ✅ | ✅ | ✅ |
 | 业务转发 `POST /biz/*path` | ✅（WB 独有） | ❌ | ✅（命名空间来自 Key 的 `biz_namespace`） |
 | **认证头** | `x-api-key` **优先**，其次 `Authorization: Bearer` | **只认 `Authorization: Bearer`** | **两者都收**（同 WB 规则） |
@@ -145,6 +145,13 @@ Anthropic 系客户端**自己会拼 `/v1/messages`**；给它带 `/v1` 的地�
 - **Codex、Trae 自定义模型、CodeBuddy `models.json` 需要手填模型 ID** —— 从 `/v1/models` 里复制，别猜。
 - `/v1/models` 返回 200 **不等于**该模型此刻一定能用（上游可能限流）。清单只代表「网关愿意暴露」。
 - **统一入口的模型名必须带命名空间前缀**（`wb-cn:…`）—— 不带前缀一律 400，不做兜底猜测。见 §1.3。
+- **Trae 的上下文上限（Max Mode）逐模型不同，且不需要特殊模型名**：网关从 Trae 官方模型目录
+  读取每个模型的 `dev`（`__dev` 通道实际窗口）与 `max`（Max Mode 上限）；`max > dev` 的模型在请求时
+  注入 `is_max_mode`，`/v1/models` 直接声明它**自己的** `max`。
+  - 不是统一 1M：实测 `glm-5.3` 200k→1M、`mimo-v2.6-pro` 200k→981504、`Doubao-Seed-2.1-Turbo` 上限仍是 256k；
+    清单里 `max_mode: true` 表示这条已开 Max。
+  - 目录拉不到（无账号 / 网络）⇒ 按客户端清单的默认窗口声明，**不猜数字**。
+  - 基名即可（`glm-5.3`、统一入口 `trae-cn:glm-5.3`），不用加后缀、不用另选一条。
 
 ### 2.5 流式
 
@@ -181,6 +188,7 @@ Trae 分区：把端口换成 `57894`，且**认证头统一用 `Authorization: 
 
 | 症状 | 真实原因 | 怎么办 |
 |:---|:---|:---|
+| **`400` + `"code":"11-128"`**（`request illegal` / 「这次调用没通过渠道校验」） | 上游渠道校验要求**会话头三件套**齐全（`X-Conversation-ID` / `X-Conversation-Request-ID` / `X-Conversation-Message-ID`）；旧版网关在客户端没传 `X-Conversation-ID` 时会漏发 | 升级到 **`v2026.10.171833`+** 后重启网关。**与额度、登录态无关** —— 重登 / 换号 / 改客户端配置都没用 |
 | `401 缺少凭据` | 客户端没发认证头 | 检查 Key 环境变量是否真的存在（新开终端 / 重启客户端） |
 | `401 API Key 无效或已吊销` | Key 错、被吊销、或跨区使用 | 重新创建；确认 Key 属于当前分区 |
 | `401` + Trae 网关 + Claude Code | 用了 `ANTHROPIC_API_KEY`（发 `x-api-key`） | 改用 `ANTHROPIC_AUTH_TOKEN` |
@@ -199,6 +207,11 @@ Trae 分区：把端口换成 `57894`，且**认证头统一用 `Authorization: 
 >
 > **`Retry-After` 只出现在 `pool_busy` 上**：429 / 402 的真正解冻时刻在上游响应里，本仓拿不到
 > 可信值，宁可让客户端自己指数退避，也不编一个假的秒数。
+>
+> **`11-128` 是版本问题，不是配置问题**：`092c5e3` 起 chat 出站恒发上面那三件套
+> （`session_headers::resolve_conversation_id` 阶梯到按 `session_key` 稳定派生，不再留空），
+> 国际版 `wb-global` 与国内版走同一条出站路径 —— WB 老入口 `57891` 与统一网关 `57892` 都吃这个修复。
+> 仍报 400 就先看「设置 → 关于」的版本号，别去翻 Key 或重登账号。
 
 ---
 

@@ -190,10 +190,15 @@ export default function TraeApiServicePage() {
       api.getTraeGatewayConfig(),
       api.getTraeGatewayStatus(variant),
       api.getTraeGatewayLogs(),
-      ...programs.map(async (program) => ({
-        data: await api.getTraeClientModels(program.variant),
-        gatewayNames: readModelNames(await api.getTraeGatewayModels(program.variant)),
-      })),
+      ...programs.map(async (program) => {
+        const gateway = await api.getTraeGatewayModels(program.variant);
+        return {
+          data: await api.getTraeClientModels(program.variant),
+          gatewayNames: readModelNames(gateway),
+          // 逐模型上下文：官方目录的 dev/max（不是统一 1M），表里直接显示。
+          gatewayContexts: readModelContexts(gateway),
+        };
+      }),
     ]);
     return {
       config: normalizeTraeGatewayConfig(configRaw),
@@ -202,6 +207,7 @@ export default function TraeApiServicePage() {
         ...program,
         data: perProgram[index]?.data ?? null,
         gatewayNames: perProgram[index]?.gatewayNames ?? null,
+        gatewayContexts: perProgram[index]?.gatewayContexts ?? null,
       })),
       logs: normalizeTraeGatewayLogs(logsRaw),
     };
@@ -298,19 +304,27 @@ export default function TraeApiServicePage() {
 
   async function persist(next: Partial<TraeGatewayConfig>) {
     const merged = { ...config, ...next };
+    // 乐观更新：开关立刻跟手，失败再回滚 —— 本地保存很快，但「点了没反应」的体感
+    // 通常就是等 IO 这段。注意主流程仍以服务端返回为准（下面 `loadAll` 会重读）。
+    const previous = config;
+    patchSnapshot({ config: merged });
     setSaving(true);
     try {
       await api.saveTraeGatewayConfig(toTraeGatewayConfigRaw(merged));
-      patchSnapshot({ config: merged });
       // 保存会启动/重启监听，状态要重读（仍按当前产品线）。
       const statusRaw = await api.getTraeGatewayStatus(variant);
       patchSnapshot({ status: normalizeTraeGatewayStatus(statusRaw) });
+      // ★ 清单里的「上下文」是按 `/v1/models` 当前声明抓的 ⇒ **只有改开关**才需要重取
+      //   （改端口/地址不必白跑一趟）；否则表格停在旧值，就是「点了、列表没变」。
+      // 表格已按开关本地选档，重取只用于对齐服务端计数/来源，**不阻塞交互**。
+      if (next.maxMode !== undefined) void onRefreshModels();
       toast.success(
         merged.enabled
           ? t("trae.stats.api.toast.savedStarted")
           : t("trae.stats.api.toast.savedDisabled"),
       );
     } catch (e) {
+      patchSnapshot({ config: previous });
       toast.error(t("trae.stats.api.toast.saveFailed"), { description: api.asError(e) });
     } finally {
       setSaving(false);
@@ -731,6 +745,8 @@ export default function TraeApiServicePage() {
                 defaultModel={config.defaultModel}
                 refreshing={refreshingModels}
                 onRefresh={() => onRefreshModels()}
+                maxMode={config.maxMode}
+                onToggleMaxMode={(checked) => void persist({ maxMode: checked })}
               />
             </>
           )}
@@ -809,6 +825,28 @@ export default function TraeApiServicePage() {
  * 不在对外清单里（那就是「看得见、调不动」的那批）。只解析 `id` 一个字段，
  * 不必再建一份模型类型。
  */
+/**
+ * 同上，但取 `id → context_length` 映射（`/v1/models` 已经按官方目录声明了每个模型**自己的**
+ * 上限：`max > dev` 时是 max，否则是 dev）。表格的「上下文」列直接用这份数字。
+ */
+function readModelContexts(
+  raw: unknown,
+): Record<string, { dev: number | null; max: number | null }> | null {
+  const record = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  if (!Array.isArray(record.data)) return null;
+  const out: Record<string, { dev: number | null; max: number | null }> = {};
+  for (const item of record.data) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    if (typeof row.id !== "string") continue;
+    const chosen = typeof row.context_length === "number" ? row.context_length : null;
+    const dev = typeof row.context_length_default === "number" ? row.context_length_default : chosen;
+    const max = typeof row.context_length_max === "number" ? row.context_length_max : null;
+    out[row.id] = { dev, max };
+  }
+  return out;
+}
+
 function readModelNames(raw: unknown): string[] | null {
   const record = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   if (!Array.isArray(record.data)) return null;

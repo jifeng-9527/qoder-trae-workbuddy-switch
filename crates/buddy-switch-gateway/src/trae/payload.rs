@@ -139,6 +139,53 @@ pub const MODEL_NAMES: &[&str] = &[
 /// 静态兜底清单的上下文窗口（客户端清单里取不到时沿用，保持既有形状不变）。
 const DEFAULT_CONTEXT_LENGTH: i64 = 131_072;
 
+/// Max Mode 的窗口口径**不在代码里写死**，而是来自官方模型目录
+/// （[`crate::trae::catalog`] 的 `context_window_tokens.{dev,max}`）。
+///
+/// ## 为什么不写常量表（issue #53 三版）
+///
+/// 各模型的上限并不相同：实测 `glm-5.3` 是 200k→1M，`mimo-v2.6-pro` 是 200k→981504，
+/// `Doubao-Seed-2.1-Turbo` 上限与默认相同（256k）。任何「统一 1M」的假设都会虚报窗口。
+///
+/// ## 判定规则
+///
+/// 目录里 `max > dev` ⇒ 该模型**支持** Max Mode：请求时注入 `is_max_mode`，
+/// `/v1/models` 声明 `max`；否则声明 `dev`（`__dev` 通道实际窗口）。
+/// 目录拉不到 ⇒ 回落到客户端清单的 `default`，**不猜数字**。
+
+/// 该模型的 Max Mode 口径 `(dev, max)`；不支持 / 目录缺失 ⇒ `None`。
+fn max_mode_window(variant: Option<TraeVariant>, model: &str) -> Option<(i64, i64)> {
+    let variant = variant?;
+    let (dev, max) = crate::trae::catalog::context_for(variant, model)?;
+    let dev = dev?;
+    let max = max?;
+    (max > dev).then_some((dev, max))
+}
+
+/// 一条 `/v1/models` 条目。
+///
+/// `max_mode` 是**说明字段**（OpenAI 兼容客户端会忽略未知字段）：
+/// `true` = 该模型支持 Max Mode（`context_length` 已按它自己的上限声明）。
+fn model_entry(
+    id: &str,
+    context_length: i64,
+    max_mode: bool,
+    default_window: Option<i64>,
+    max_window: Option<i64>,
+) -> Value {
+    json!({
+        "id": id,
+        "object": "model",
+        "created": 1_753_600_000,
+        "owned_by": "trae",
+        "context_length": context_length,
+        // 两档原值：管理面据此**本地即时**切换显示，不必等重新取数。
+        "context_length_default": default_window,
+        "context_length_max": max_window,
+        "max_mode": max_mode,
+    })
+}
+
 /// `/v1/models` 的响应体（**静态兜底清单**）。
 ///
 /// 只在客户端清单读不到时才被用到，见 [`models_response_for`]。
@@ -146,19 +193,28 @@ pub fn models_response() -> Value {
     models_response_from(
         MODEL_NAMES
             .iter()
-            .map(|name| (*name, None))
+            .map(|name| (*name, None, None))
             .collect::<Vec<_>>(),
+        None,
+        None,
+        true,
     )
 }
 
 /// 静态兜底清单 + **禁用过滤**（出口 ① 的兜底分支也必须过滤 —— 否则 runtime 关闭瞬间会漏出被禁模型）。
-pub fn models_response_filtered(disabled: &BTreeSet<String>) -> Value {
+pub fn models_response_filtered(
+    disabled: &BTreeSet<String>,
+    variant: Option<TraeVariant>,
+    max_mode: bool,
+) -> Value {
     models_response_from(
         MODEL_NAMES
             .iter()
-            .filter(|name| !crate::disabled_models::is_disabled_in(disabled, name))
-            .map(|name| (*name, None))
+            .map(|name| (*name, None, None))
             .collect::<Vec<_>>(),
+        Some(disabled),
+        variant,
+        max_mode,
     )
 }
 
@@ -192,17 +248,28 @@ pub fn models_response_filtered(disabled: &BTreeSet<String>) -> Value {
 /// `disabled` 是该变体所在 region 的禁用集合（唯一判断点在 [`crate::disabled_models::is_disabled`]）。
 /// 被禁用的模型**不出现**；`available`（= 该模型 ∈ 本 function 分组）已由 [`servable_entries`]
 /// （或静态兜底清单）保证。两条来源都要过滤 —— 禁用是用户偏好，与清单来源无关。
-pub fn models_response_for(variant: TraeVariant, disabled: &BTreeSet<String>) -> Value {
+///
+/// ## ★ Max Mode 不再产生影子条目（issue #53 二版）
+///
+/// 支持 Max Mode 的模型只有**一条**记录，`context_length` 直接声明 1M（或上游
+/// `context_window_size.max`）。不再有 `<模型>-max`，因此禁用 / 粘性 / 冷却 / 探测
+/// 都回归「一个模型一个名字」，不需要按基名特判。
+pub fn models_response_for(
+    variant: TraeVariant,
+    disabled: &BTreeSet<String>,
+    max_mode: bool,
+) -> Value {
     let list = buddy_switch_core::modules::trae::model_list::read_client_model_list(variant);
     if list.groups.is_empty() {
-        return models_response_filtered(disabled);
+        return models_response_filtered(disabled, Some(variant), max_mode);
     }
 
-    let entries = servable_entries(&list, variant)
-        .into_iter()
-        .filter(|(name, _)| !crate::disabled_models::is_disabled_in(disabled, name))
-        .collect();
-    models_response_from(entries)
+    models_response_from(
+        servable_entries(&list, variant),
+        Some(disabled),
+        Some(variant),
+        max_mode,
+    )
 }
 
 /// 取**本变体真能调**的模型：该程序位 `function` 对应的那个分组。
@@ -210,7 +277,10 @@ pub fn models_response_for(variant: TraeVariant, disabled: &BTreeSet<String>) ->
 /// 分组缺失时回落**全分组并集**（改造前的口径）：客户端版本变动 / 上游给分组改名时，
 /// 宁可多列（老行为），也不要因为一个分组名对不上就把整张清单清空 ——
 /// 「列模型」是开箱能力，不能因为清单结构漂移而失效。
-fn servable_entries(list: &ClientModelList, variant: TraeVariant) -> Vec<(&str, Option<i64>)> {
+fn servable_entries(
+    list: &ClientModelList,
+    variant: TraeVariant,
+) -> Vec<(&str, Option<i64>, Option<i64>)> {
     let function = function_for(variant);
     let Some(group) = list.groups.iter().find(|group| group.function == function) else {
         return dedupe_entries(list);
@@ -227,45 +297,86 @@ fn servable_entries(list: &ClientModelList, variant: TraeVariant) -> Vec<(&str, 
         .iter()
         .filter(|model| !model.is_bypass)
         .filter(|model| seen.insert(model.name.as_str()))
-        .map(|model| (model.name.as_str(), model.context_window))
+        .map(|model| {
+            (
+                model.name.as_str(),
+                model.context_window,
+                model.context_window_max,
+            )
+        })
         .collect()
 }
 
-/// 把客户端清单展平成 `(模型名, 上下文窗口)`，并**按出现顺序去重**。
+/// 把客户端清单展平成 `(模型名, 默认窗口, 上限窗口)`，并**按出现顺序去重**。
 ///
 /// 去重是必需的：同一个模型会在多个 function 分组里重复出现（本机实测
 /// `solo_work_lite` 与 `solo_work_remote` 内容完全相同）。
 /// **保序**（而不是排序）是为了让 `/v1/models` 的顺序与客户端里看到的一致。
-fn dedupe_entries(list: &ClientModelList) -> Vec<(&str, Option<i64>)> {
+fn dedupe_entries(list: &ClientModelList) -> Vec<(&str, Option<i64>, Option<i64>)> {
     let mut seen = std::collections::HashSet::new();
-    let mut entries: Vec<(&str, Option<i64>)> = Vec::new();
+    let mut entries: Vec<(&str, Option<i64>, Option<i64>)> = Vec::new();
     for group in &list.groups {
         for model in &group.models {
             if seen.insert(model.name.as_str()) {
-                entries.push((model.name.as_str(), model.context_window));
+                entries.push((
+                    model.name.as_str(),
+                    model.context_window,
+                    model.context_window_max,
+                ));
             }
         }
     }
     entries
 }
 
-/// 把 `(模型名, 上下文窗口)` 组装成 OpenAI `/v1/models` 形状。
+/// 把 `(模型名, 默认窗口, 上限窗口)` 组装成 OpenAI `/v1/models` 形状。
 ///
-/// 两条来源（客户端清单 / 静态兜底）共用本函数 —— 形状只有一处，不会漂移。
-fn models_response_from(entries: Vec<(&str, Option<i64>)>) -> Value {
-    json!({
-        "object": "list",
-        "data": entries
-            .into_iter()
-            .map(|(name, context_window)| json!({
-                "id": name,
-                "object": "model",
-                "created": 1_753_600_000,
-                "owned_by": "trae",
-                "context_length": context_window.unwrap_or(DEFAULT_CONTEXT_LENGTH),
-            }))
-            .collect::<Vec<_>>(),
-    })
+/// ## `context_length` 的口径（**一个模型一条记录**）
+///
+/// 优先用官方目录的逐模型数字（[`max_mode_window`]）：
+/// - 支持 Max Mode（`max > dev`）⇒ 声明 `max`（请求时会注入 `is_max_mode`）；
+/// - 否则声明 `dev`（`__dev` 通道实际窗口）；
+/// - 目录缺失 ⇒ 客户端清单给的窗口 / 兜底常量，**不猜**。
+///
+/// `max_mode` 字段供客户端做角标，不影响解析。
+///
+/// 禁用过滤也在这里做（三处各过滤一遍必然漂移）。
+fn models_response_from(
+    entries: Vec<(&str, Option<i64>, Option<i64>)>,
+    disabled: Option<&BTreeSet<String>>,
+    variant: Option<TraeVariant>,
+    max_mode: bool,
+) -> Value {
+    let allowed =
+        |name: &str| disabled.is_none_or(|set| !crate::disabled_models::is_disabled_in(set, name));
+    let mut data: Vec<Value> = Vec::with_capacity(entries.len());
+    for (name, default_window, max_window) in entries {
+        if !allowed(name) {
+            continue;
+        }
+        // 两档原值：目录优先，客户端清单兜底；`max` 只在确实大于 `dev` 时才算「有上限档」。
+        let catalog = variant.and_then(|variant| crate::trae::catalog::context_for(variant, name));
+        let dev = catalog
+            .and_then(|(dev, _)| dev)
+            .or(default_window)
+            .or(max_window)
+            .unwrap_or(DEFAULT_CONTEXT_LENGTH);
+        let max = catalog
+            .and_then(|(_, max)| max)
+            .filter(|max| *max > dev)
+            .or(max_window.filter(|max| *max > dev));
+        // 开关开着才声明 max 并标 max_mode；关掉就按 dev（实际通道窗口）声明。
+        let context_length = if max_mode { max.unwrap_or(dev) } else { dev };
+        let max_mode_flag = max_mode && max.is_some();
+        data.push(model_entry(
+            name,
+            context_length,
+            max_mode_flag,
+            Some(dev),
+            max,
+        ));
+    }
+    json!({ "object": "list", "data": data })
 }
 
 /// 生成一个 UUID 形态的随机串（上游要求 `conversation_id` 等字段形如 UUID）。
@@ -415,6 +526,7 @@ pub fn prepare_llm_chat_body(
     uid: &str,
     device_id: &str,
     machine_id: &str,
+    max_mode: bool,
 ) -> Vec<u8> {
     let mut body: Value = match serde_json::from_slice(src) {
         Ok(value) => value,
@@ -435,6 +547,10 @@ pub fn prepare_llm_chat_body(
         .filter(|value| !value.is_empty())
         .unwrap_or(default_model)
         .to_string();
+    // ★ Max Mode（issue #53 三版）：策略层开关，**不是**模型名的一部分。
+    //   是否注入取决于**官方目录**里该模型的 `max > dev`（逐模型，不写死 1M）；
+    //   模型名原样派生 `config_name` / `model_name`。
+    let max_mode = max_mode && max_mode_window(Some(variant), &model).is_some();
     let (config_name, model_name) = model_config(&model);
 
     // 固定字段：覆盖客户端可能传来的同名值（上游只认这一套）。
@@ -463,12 +579,21 @@ pub fn prepare_llm_chat_body(
     object.insert("machine_id".into(), json!(machine_id));
     object.insert("project_id".into(), json!(derive_id("proj:")));
     object.insert("workspace_id".into(), json!("e04cdd"));
+    // `prompt_max_tokens` 固定 168000 —— 即使 Max Mode 也一样。
+    //
+    // 实测矩阵（参考实现 2026-09-26 真机）：`is_max_mode:true` + `168000` → 200；
+    // 省略该字段 → `4001`（上游必填）；填 1M → `4001`（上游拒绝 1M 值）。
+    // 而 `is_max_mode:true` + 168000 时，实测 180051 prompt_tokens 的请求仍是 200
+    // —— 该字段**不钳制**实际上下文，1M 窗口由上游内部决策。
     object.insert("prompt_max_tokens".into(), json!(168_000));
     object.insert("mode".into(), json!("FunctionCall"));
     object.insert("ide_version".into(), json!(TRAE_IDE_VERSION));
     object.insert("ide_version_code".into(), json!(TRAE_IDE_VERSION_CODE));
     object.insert("app_id".into(), json!(TRAE_APP_ID));
     object.insert("package_type".into(), json!("stable_cn"));
+    if max_mode {
+        object.insert("is_max_mode".into(), json!(true));
+    }
 
     serde_json::to_vec(&body).unwrap_or_else(|_| src.to_vec())
 }
@@ -604,6 +729,7 @@ fn normalize_tools(object: &mut Map<String, Value>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::trae::catalog;
     // 两个 `function` 常量只被断言用到（lib 侧经 `function_for` 取），
     // 故**只在测试模块导入** —— 放顶层会得到 `unused_imports` 警告。
     use crate::trae::{TRAE_FUNCTION_CHAT_V3, TRAE_FUNCTION_SOLO_WORK};
@@ -618,6 +744,7 @@ mod tests {
             "u1",
             "dev1",
             "mach1",
+            true,
         );
         serde_json::from_slice(&out).expect("output must stay valid JSON")
     }
@@ -754,6 +881,7 @@ mod tests {
                 uid,
                 "dev1",
                 "mach1",
+                true,
             ))
             .unwrap()
         };
@@ -952,13 +1080,13 @@ mod tests {
     fn invalid_json_is_passed_through_untouched() {
         let raw = b"not json at all";
         assert_eq!(
-            prepare_llm_chat_body(raw, TraeVariant::TraeWork, "m", "u", "d", "m"),
+            prepare_llm_chat_body(raw, TraeVariant::TraeWork, "m", "u", "d", "m", true),
             raw.to_vec()
         );
         // 合法 JSON 但不是对象，同样原样返回。
         let array = b"[1,2,3]";
         assert_eq!(
-            prepare_llm_chat_body(array, TraeVariant::TraeWork, "m", "u", "d", "m"),
+            prepare_llm_chat_body(array, TraeVariant::TraeWork, "m", "u", "d", "m", true),
             array.to_vec()
         );
     }
@@ -1027,15 +1155,27 @@ mod tests {
     fn models_response_lists_every_name_as_openai_objects() {
         let response = models_response();
         let data = response["data"].as_array().unwrap();
+        // 一个模型一条记录（Max Mode 是策略，不再产生影子条目）。
         assert_eq!(data.len(), MODEL_NAMES.len());
         assert_eq!(data[0]["object"], "model");
         assert_eq!(response["object"], "list");
+        for name in MODEL_NAMES {
+            assert!(
+                data.iter().any(|row| row["id"] == *name),
+                "基础条目 {name} 不该被变体挤掉"
+            );
+        }
     }
 
     /// 客户端清单里的**真实**上下文窗口优先；取不到时回落既有常量（形状不退化）。
     #[test]
     fn models_response_from_uses_real_context_window_and_falls_back() {
-        let response = models_response_from(vec![("a", Some(256_000)), ("b", None)]);
+        let response = models_response_from(
+            vec![("a", Some(256_000), None), ("b", None, None)],
+            None,
+            None,
+            true,
+        );
         let data = response["data"].as_array().unwrap();
 
         assert_eq!(data[0]["id"], "a");
@@ -1045,6 +1185,170 @@ mod tests {
             data[1]["context_length"], DEFAULT_CONTEXT_LENGTH,
             "取不到窗口必须回落成数值，不能是 null —— 老客户端会直接读这个字段"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Max Mode（issue #53 三版：逐模型读官方目录，不写死 1M）
+    // -----------------------------------------------------------------------
+
+    /// ★★ 护栏：每个模型的窗口**按它自己的目录值**声明，上限不是统一的 1M。
+    ///
+    /// 反例（改坏会红）：把 `max` 当成常量 1M ⇒ `mimo-v2.6-pro`（981504）与
+    /// `Doubao-Seed-2.1-Turbo`（无更高上限）都会被虚报。
+    #[test]
+    fn catalog_decides_per_model_window_and_max_mode_flag() {
+        catalog::install_for_test(
+            TraeVariant::TraeWork,
+            vec![
+                ("glm-5.3", Some(200_000), Some(1_000_000)),
+                ("mimo-v2.6-pro", Some(200_000), Some(981_504)),
+                ("Doubao-Seed-2.1-Turbo", Some(256_000), Some(256_000)),
+            ],
+        );
+        let body = models_response_from(
+            vec![
+                ("glm-5.3", Some(200_000), None),
+                ("mimo-v2.6-pro", Some(200_000), None),
+                ("Doubao-Seed-2.1-Turbo", Some(256_000), None),
+                ("kimi-k2.6", Some(200_000), None),
+            ],
+            None,
+            Some(TraeVariant::TraeWork),
+            true,
+        );
+        let data = body["data"].as_array().unwrap();
+        assert_eq!(data[0]["context_length"], 1_000_000, "glm-5.3 上限 1M");
+        assert_eq!(data[0]["max_mode"], true);
+        assert_eq!(
+            data[1]["context_length"], 981_504,
+            "上限不是统一 1M —— 目录说多少就是多少"
+        );
+        assert_eq!(data[1]["max_mode"], true);
+        assert_eq!(
+            data[2]["context_length"], 256_000,
+            "上限与默认相同的模型只声明 256k"
+        );
+        assert_eq!(data[2]["max_mode"], false);
+        assert_eq!(
+            data[3]["context_length"], 200_000,
+            "目录里没有的模型回落到客户端清单给的窗口，不猜"
+        );
+        assert_eq!(data[3]["max_mode"], false);
+    }
+
+    /// ★★ 护栏：Max Mode **关掉**时按 `dev` 声明、且不注入 —— 开关必须两端一致。
+    ///
+    /// 反例（改坏会红）：只改清单不改注入（或反之）⇒ 用户「关了开关，请求里还在发
+    /// is_max_mode」，或者「声明 200k、实际仍按 1M 花额度」。
+    #[test]
+    fn max_mode_switch_off_declares_dev_and_skips_injection() {
+        catalog::install_for_test(
+            TraeVariant::GlobalTraeCode,
+            vec![("glm-5.3", Some(200_000), Some(1_000_000))],
+        );
+        let entries = vec![("glm-5.3", Some(200_000), None)];
+
+        let off = models_response_from(
+            entries.clone(),
+            None,
+            Some(TraeVariant::GlobalTraeCode),
+            false,
+        );
+        assert_eq!(off["data"][0]["context_length"], 200_000, "关闭时声明 dev");
+        assert_eq!(off["data"][0]["max_mode"], false);
+
+        let on = models_response_from(entries, None, Some(TraeVariant::GlobalTraeCode), true);
+        assert_eq!(on["data"][0]["context_length"], 1_000_000, "开启时声明 max");
+        assert_eq!(on["data"][0]["max_mode"], true);
+
+        let prepare = |max_mode: bool| -> Value {
+            let converted = prepare_llm_chat_body(
+                br#"{"model":"glm-5.3","messages":[{"role":"user","content":"hi"}]}"#,
+                TraeVariant::GlobalTraeCode,
+                "default",
+                "uid",
+                "device",
+                "machine",
+                max_mode,
+            );
+            serde_json::from_slice(&converted).expect("合法 JSON")
+        };
+        assert!(prepare(true).get("is_max_mode").is_some(), "开启时必须注入");
+        assert!(
+            prepare(false).get("is_max_mode").is_none(),
+            "关闭时不得注入 is_max_mode"
+        );
+    }
+
+    /// 禁用过滤：被禁用的模型整条消失。
+    #[test]
+    fn disabled_models_are_filtered_out() {
+        let mut disabled = BTreeSet::new();
+        disabled.insert("glm-5.3".to_string());
+        let body = models_response_from(
+            vec![("glm-5.3", None, None), ("kimi-k3", None, None)],
+            Some(&disabled),
+            None,
+            true,
+        );
+        let ids: Vec<&str> = body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|row| row["id"].as_str())
+            .collect();
+        assert_eq!(ids, vec!["kimi-k3"]);
+    }
+
+    /// ★★ 护栏：请求侧只对「目录里 `max > dev`」的模型注入 `is_max_mode`。
+    ///
+    /// 反例（改坏会红）：给所有模型都注入 ⇒ 上游对不支持 Max Mode 的模型报 4001，
+    /// 用户「什么都没改却用不了了」。
+    #[test]
+    fn prepare_body_injects_max_mode_only_when_catalog_says_so() {
+        catalog::install_for_test(
+            TraeVariant::Global,
+            vec![
+                ("glm-5.3", Some(200_000), Some(1_000_000)),
+                ("Doubao-Seed-2.1-Turbo", Some(256_000), Some(256_000)),
+            ],
+        );
+        let prepare = |src: &[u8]| -> Value {
+            let converted = prepare_llm_chat_body(
+                src,
+                TraeVariant::Global,
+                "default",
+                "uid",
+                "device",
+                "machine",
+                true,
+            );
+            serde_json::from_slice(&converted).expect("合法 JSON")
+        };
+
+        // max > dev：注入，且模型名不被改写。
+        let body = prepare(br#"{"model":"glm-5.3","messages":[{"role":"user","content":"hi"}]}"#);
+        assert_eq!(body["is_max_mode"], true);
+        assert_eq!(body["model"], "glm-5.3");
+        assert_eq!(body["config_name"], "glm-5.3");
+        assert_eq!(body["model_name"], "glm-5.3__dev");
+        assert_eq!(
+            body["prompt_max_tokens"], 168_000,
+            "Max Mode 也固定 168000 —— 上游拒绝 1M 值"
+        );
+
+        // max == dev（上限没有更高）：不注入。
+        let body = prepare(
+            br#"{"model":"Doubao-Seed-2.1-Turbo","messages":[{"role":"user","content":"hi"}]}"#,
+        );
+        assert!(
+            body.get("is_max_mode").is_none(),
+            "上限与默认相同的模型不得注入 Max Mode"
+        );
+
+        // 目录里没有的模型：不注入。
+        let body = prepare(br#"{"model":"kimi-k2.6","messages":[{"role":"user","content":"hi"}]}"#);
+        assert!(body.get("is_max_mode").is_none());
     }
 
     /// ★ 去重必须**保序**（不是排序）：同一模型在多个 function 分组里重复出现，
@@ -1073,7 +1377,7 @@ mod tests {
 
         let entries = dedupe_entries(&list);
         assert_eq!(
-            entries.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+            entries.iter().map(|(name, ..)| *name).collect::<Vec<_>>(),
             vec!["m1", "m2", "m3"],
             "重复的 m2 只能出现一次，且位置保持在首次出现处"
         );
@@ -1129,6 +1433,7 @@ mod tests {
             "u1",
             "dev1",
             "mach1",
+            true,
         ))
         .unwrap();
 
@@ -1168,7 +1473,7 @@ mod tests {
         assert_eq!(
             servable_entries(&work, TraeVariant::TraeWork)
                 .iter()
-                .map(|(name, _)| *name)
+                .map(|(name, ..)| *name)
                 .collect::<Vec<_>>(),
             vec!["glm-5.3", "deepseek-v4.1-flash"]
         );
@@ -1182,7 +1487,7 @@ mod tests {
         assert_eq!(
             servable_entries(&code, TraeVariant::Trae)
                 .iter()
-                .map(|(name, _)| *name)
+                .map(|(name, ..)| *name)
                 .collect::<Vec<_>>(),
             vec!["glm-5.3-flash", "qwen3.8-flash"]
         );
@@ -1195,7 +1500,7 @@ mod tests {
         assert_eq!(
             servable_entries(&renamed, TraeVariant::TraeWork)
                 .iter()
-                .map(|(name, _)| *name)
+                .map(|(name, ..)| *name)
                 .collect::<Vec<_>>(),
             vec!["glm-5.3", "Doubao-Seed-Code"],
             "分组名对不上时宁可多列（老行为），也不能把清单清空"
@@ -1214,7 +1519,7 @@ mod tests {
         assert_eq!(
             servable_entries(&bypass, TraeVariant::TraeWork)
                 .iter()
-                .map(|(name, _)| *name)
+                .map(|(name, ..)| *name)
                 .collect::<Vec<_>>(),
             vec!["glm-5.3"],
             "第三方路由条目不得进对外清单"
@@ -1225,7 +1530,7 @@ mod tests {
         assert_eq!(
             servable_entries(&dup, TraeVariant::Trae)
                 .iter()
-                .map(|(name, _)| *name)
+                .map(|(name, ..)| *name)
                 .collect::<Vec<_>>(),
             vec!["a", "b"]
         );
@@ -1248,6 +1553,7 @@ mod tests {
             is_beta: false,
             is_bypass,
             context_window,
+            context_window_max: None,
             prompt_max_tokens: None,
         }
     }

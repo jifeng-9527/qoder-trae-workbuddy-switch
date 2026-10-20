@@ -79,6 +79,10 @@ export const en = {
   /* Model table (P11 §1.6) — components/gateway/model-table.tsx, shared by both platforms.
      Columns = model / upstream / gateway exposure; no "scope" column (#1), no "protocol" column (#2). */
   "shared.gateway.models.colModel": "Model",
+  "shared.gateway.models.colContext": "Context",
+  "shared.gateway.models.contextTitle": "Context limit",
+  "shared.gateway.models.contextFixedDesc": "On: lists and requests use the upstream maximum window (e.g. 1M). Off: fall back to the default window (e.g. 300k). Numbers come from the official catalog.",
+  "shared.gateway.models.contextFromCatalog": "From catalog",
   "shared.gateway.models.colUpstream": "Upstream",
   "shared.gateway.models.colExposed": "Gateway exposure",
   "shared.gateway.models.upstreamAvailable": "Available",
@@ -615,6 +619,7 @@ export const en = {
   "shared.checkinResult.retryFailed": "Retry failed",
   "shared.checkinResult.summary4": "{ok} ok · {skip} unavailable · {fail} failed",
   "shared.checkinResult.skippedNames": "Check-in channel unavailable for: {names}",
+  "shared.checkinResult.earned": "+{n} Credits this run",
   "shared.checkinResult.dismiss": "Got it",
   "shared.list.groupCount": "{n}",
 

@@ -193,15 +193,18 @@ flowchart TB
 
 **Trois règles intangibles** partout : les données restent sur cette machine, les identifiants ne sont écrits que dans l'état de connexion des clients (pas de connexion proxy, pas de modification des protocoles amont), et toute écriture est précédée d'une sauvegarde.
 
-## Trois formes
+## Quatre formes
 
 | Forme | Comment l'obtenir | Remarque |
 | --- | --- | --- |
 | **Application de bureau** | Télécharger l'installateur depuis [GitHub Releases](https://github.com/NextAgentX/qoder-trae-workbuddy-switch/releases/latest) | Empaquetée avec Tauri ; recommandée au quotidien |
 | **webui** | Compiler depuis les sources (ci-dessous) | Même bundle frontal que l'application, servi en HTTP local |
+| **Docker** | Récupérer l'image préconstruite `ghcr.io/nextagentx/buddy-switch` (amd64 / arm64) | Le conteneur embarque le **serveur headless** (webui + passerelles API), **pas** le commutateur de bureau ; voir [Déploiement Docker](docs/guides/DOCKER.md) |
 | **Démo en ligne** | [GitHub Pages](https://nextagentx.github.io/qoder-trae-workbuddy-switch/) | Démo en lecture seule ; comptes et usage fictifs |
 
 > Le paquet npm n'est pas encore publié : `npm i -g` ne l'installera pas. Pour la forme webui, utilisez la compilation depuis les sources ci-dessous.
+>
+> La forme Docker est **serveur uniquement** : changer la session du client, lancer le client, la zone de notification et la fenêtre flottante exigent un **client graphique sur la même machine** — rien de tout cela ne fonctionne dans le conteneur.
 
 ## Démarrage rapide
 
@@ -400,8 +403,17 @@ src/                     # frontend : components / pages / lib / locales
 npm/                     # paquets npm (non publiés)
 ```
 
-Prérequis, processus de publication et conventions de répertoires : [docs/guides/DEVELOPMENT.md](docs/guides/DEVELOPMENT.md).
-**Carte complète de la documentation : [docs/README.md](docs/README.md)** — guides / spécifications courantes / historique en lecture seule / prototype.
+## Documentation
+
+L'index complet est dans [docs/README.md](docs/README.md) — par cycle de vie : guides / spécifications courantes / historique en lecture seule / prototype. Les plus consultés :
+
+| Document | Contenu |
+| --- | --- |
+| [guides/DEVELOPMENT.md](docs/guides/DEVELOPMENT.md) | Prérequis, développement local, liste des contrôles, processus de publication, conventions de répertoires |
+| [guides/DOCKER.md](docs/guides/DOCKER.md) | Déploiement en conteneur : image préconstruite / compilation depuis les sources, ports et sécurité, dépannage |
+| [guides/GATEWAY-CLIENT-INTEGRATION.md](docs/guides/GATEWAY-CLIENT-INTEGRATION.md) | Brancher Codex / Claude Code / d'autres clients sur la passerelle locale |
+| [specs/](docs/specs/) | Architecture et décisions courantes (à lire avant de modifier le code) |
+| [policies/](docs/policies/) | Licence et avertissement |
 
 ## Contribuer
 

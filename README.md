@@ -190,15 +190,18 @@ flowchart TB
 
 **三条硬纪律**，贯穿全部功能：数据只落本机、凭据只写客户端登录态（不代登录、不改上游协议）、任何写入前先备份。
 
-## 三种形态
+## 四种形态
 
 | 形态 | 获取方式 | 说明 |
 | --- | --- | --- |
 | **桌面 App** | [GitHub Releases](https://github.com/NextAgentX/qoder-trae-workbuddy-switch/releases/latest) 下载安装包 | Tauri 打包，推荐日常使用 |
 | **webui** | 从源码构建（见下） | 与桌面 App 同一份前端产物，走本地 HTTP 通道 |
+| **Docker** | 拉预构建镜像 `ghcr.io/nextagentx/buddy-switch`（amd64 / arm64） | 容器内是 **headless 服务端**（webui + API 网关），**不是**桌面切换器；见 [Docker 部署](docs/guides/DOCKER.md) |
 | **在线演示** | [GitHub Pages](https://nextagentx.github.io/qoder-trae-workbuddy-switch/) | 只读演示，账号与用量均为虚构数据 |
 
 > npm 包尚未发布，`npm i -g` 暂时装不到；webui 请按下面的源码构建。
+>
+> Docker 形态只跑**服务端**：切换客户端登录态、启动客户端、托盘、悬浮窗这些依赖**同机图形客户端**的能力在容器里一律不可用（webui 上会显示为不可用/无数据）。
 
 ## 快速开始
 
@@ -270,7 +273,7 @@ buddy-switch version      # 版本号
 | --- | :---: | :---: | :---: |
 | 账号库 / 登录 / 本机导入 | ✅ 扫码 + 导入 | ✅ 网页登录 + JWT | ✅ 设备码 + PAT |
 | 一键切程序位 | ✅ 5 个（4 可切换 + 1 只读探测） | ✅ 1 个（合并客户端） | ✅ 2 个（桌面版 / CLI） |
-| 签到 / 积分 | ✅ 含自动旅行、自动轮换 | ✅ | ✅ 每日签到 + 套餐 / 额度 |
+| 签到 / 积分 | ✅ 含自动旅行、自动轮换 | ✅ | ✅ 每日活动领取（campaigns）+ 套餐 / 额度 |
 | 用量统计 | ✅ Token + 积分 | ✅ Token + 积分 | ⏳ 数据源待接入 |
 | 会话副本同步 | ✅ 内容指纹 + 加法同步 | — | — |
 | 模型额度网关 | ✅ `:57891` | ✅ `:57894` | ✅ `:57895` |
@@ -330,6 +333,7 @@ flowchart LR
 | --- | --- |
 | WorkBuddy（6 类） | 签到 · 猫猫旅行 · 活跃地图 · Token 保活 · 开学季 · 夜猫子 |
 | Trae（2 类） | 签到 · JWT 自动续期 |
+| Qoder（2 类） | 签到 · 令牌保活 |
 
 <details>
 <summary><b>自动轮换策略（WorkBuddy，防积分过期）</b></summary>
@@ -397,8 +401,17 @@ src/                     # 前端：components / pages / lib / locales
 npm/                     # npm 包（尚未发布）
 ```
 
-环境要求、发布流程、目录约定见 [docs/guides/DEVELOPMENT.md](docs/guides/DEVELOPMENT.md)。
-**全部文档的索引在 [docs/README.md](docs/README.md)** —— 按生命周期分区：指南 / 现行规格 / 只读历史 / 原型。
+## 文档
+
+完整索引在 [docs/README.md](docs/README.md) —— 按生命周期分区：指南 / 现行规格 / 只读历史 / 原型。最常翻的几份：
+
+| 文档 | 讲什么 |
+| --- | --- |
+| [guides/DEVELOPMENT.md](docs/guides/DEVELOPMENT.md) | 环境要求、本地开发、门禁清单、发布流程、目录约定 |
+| [guides/DOCKER.md](docs/guides/DOCKER.md) | 容器部署：预构建镜像 / 源码构建、端口与安全、排障 |
+| [guides/GATEWAY-CLIENT-INTEGRATION.md](docs/guides/GATEWAY-CLIENT-INTEGRATION.md) | 把 Codex / Claude Code / 其它客户端接到本机网关 |
+| [specs/](docs/specs/) | 现行架构与决策（改代码前该读的依据） |
+| [policies/](docs/policies/) | 许可与免责声明 |
 
 ## 参与贡献
 

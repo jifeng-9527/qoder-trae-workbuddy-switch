@@ -123,7 +123,8 @@ pub async fn health(State(state): State<TraeGatewayState>) -> Response {
     )
 }
 
-/// Bearer 鉴权中间件：`/health` 免鉴权，其余端点校验 `Authorization: Bearer <key>`。
+/// Bearer 鉴权中间件：健康检查（[`crate::HEALTH_PATHS`]）免鉴权，其余端点校验
+/// `Authorization: Bearer <key>`。
 ///
 /// 与参考实现的一处**有意差异**：没有任何可用 Key 时**拒绝**而不是放行。参考实现
 /// 「留空即不鉴权」意味着任何人只要猜到 57894 端口就能白嫖额度；本网关要求 Key 由
@@ -137,7 +138,7 @@ pub async fn bearer_auth(
     mut request: Request,
     next: Next,
 ) -> Response {
-    if request.uri().path() == "/health" {
+    if crate::HEALTH_PATHS.contains(&request.uri().path()) {
         return next.run(request).await;
     }
 
@@ -236,12 +237,17 @@ pub async fn models(
         .get(scope_of_trae_region(variant.region()))
         .clone();
     let fallback = disabled.clone();
+    // ★ 官方模型目录（逐模型 `dev/max`）：过期就先同步一次；失败**静默**沿用旧缓存，
+    //   绝不让「目录拉不到」变成「列模型失败」。
+    super::catalog::ensure_fresh(variant).await;
+    let max_mode = state.max_mode_now();
     // `models_response_for` 自己**不失败**（读不到就回落静态清单），所以这里的
     // `JoinError` 只可能是运行时正在关闭 —— 用（过滤后的）静态清单兜底，别让「列模型」挂掉。
-    let body =
-        tokio::task::spawn_blocking(move || payload::models_response_for(variant, &disabled))
-            .await
-            .unwrap_or_else(|_| payload::models_response_filtered(&fallback));
+    let body = tokio::task::spawn_blocking(move || {
+        payload::models_response_for(variant, &disabled, max_mode)
+    })
+    .await
+    .unwrap_or_else(|_| payload::models_response_filtered(&fallback, Some(variant), max_mode));
     json_response(StatusCode::OK, body)
 }
 
@@ -875,6 +881,7 @@ pub(crate) async fn chat_once_for_account(
         &account.uid,
         &account.device_id,
         &account.machine_id,
+        state.max_mode_now(),
     );
     // 抓取（诊断旁路）：此时改写已完成、尚未发出 —— 请求对就在这一刻落盘。
     if let Some(capture) = capture {
@@ -1634,6 +1641,7 @@ mod tests {
                 &picked.uid,
                 &picked.device_id,
                 &picked.machine_id,
+                true,
             );
             // 只改这三个字段 —— 其余字段与真实流量逐字相同（复用同一个构造器）。
             let mut body: Value =
@@ -1742,6 +1750,7 @@ mod tests {
                 &picked.uid,
                 &picked.device_id,
                 &picked.machine_id,
+                true,
             );
             let mut body: Value = serde_json::from_slice(&converted).expect("构造器产出合法 JSON");
             body["function"] = serde_json::json!(function);

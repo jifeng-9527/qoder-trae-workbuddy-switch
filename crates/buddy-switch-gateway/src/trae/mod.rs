@@ -27,6 +27,7 @@
 
 pub mod apikey;
 pub mod capture;
+pub mod catalog;
 pub mod payload;
 pub mod pool;
 pub mod routes;
@@ -241,6 +242,18 @@ pub struct TraeGatewayConfig {
     /// 漏了这一步的后果不是报错，而是「用户以为还开着、其实已被静默关掉」。
     #[serde(alias = "captureEnabled")]
     pub capture_enabled: bool,
+    /// **Max Mode**：对「官方目录里 `max > dev`」的模型注入 `is_max_mode`，并在
+    /// `/v1/models` 声明它自己的上限（逐模型，**不是统一 1M**）。默认 `true`。
+    ///
+    /// 关闭后：清单只声明 `dev`（`__dev` 通道实际窗口），请求不再注入 —— 用于
+    /// 「Max Mode 万一加价 / 拖慢，先按默认窗口用」的场景。与原型里的开关同义。
+    #[serde(alias = "maxMode")]
+    pub max_mode: bool,
+}
+
+/// 进程内 Trae 网关当前的 Max Mode 开关（给**命令面**等拿不到 `TraeGatewayState` 的地方用）。
+pub fn max_mode_now() -> bool {
+    <TraeGateway as crate::GatewayProduct>::shared_state().max_mode_now()
 }
 
 impl Default for TraeGatewayConfig {
@@ -258,6 +271,7 @@ impl Default for TraeGatewayConfig {
             preferred_uid: String::new(),
             sticky_ttl_ms: 30 * 60 * 1000,
             capture_enabled: false,
+            max_mode: true,
         }
     }
 }
@@ -409,6 +423,17 @@ impl TraeGatewayState {
     /// 读取配置快照。
     pub async fn config_snapshot(&self) -> TraeGatewayConfig {
         self.config.read().await.clone()
+    }
+
+    /// Max Mode 当前是否开启（**同步**，供 `/v1/models` 与出站注入使用）。
+    ///
+    /// 用 `try_read`：这两条路径都不是 async 上下文里的「配置主流程」，拿不到读锁时
+    /// 按**开启**处理（宁可多注入一次、也不要因为一次瞬时锁竞争静默把 1M 关掉）。
+    pub fn max_mode_now(&self) -> bool {
+        self.config
+            .try_read()
+            .map(|config| config.max_mode)
+            .unwrap_or(true)
     }
 
     /// 查询会话粘性绑定（已过期视为无绑定）。
@@ -667,13 +692,14 @@ pub async fn status_view(
 
 /// 组装 Trae 网关路由（**不含 fallback**）。
 ///
-/// 挂载 `GET /health`、`GET /status`、`GET /v1/models`、`POST /v1/chat/completions`。
-/// 鉴权由 [`routes::bearer_auth`] 统一处理，`/health` 免鉴权。
+/// 挂载 `GET /health`（兼容 `/healthz`，见 [`crate::HEALTH_PATHS`]）、`GET /status`、
+/// `GET /v1/models`、`POST /v1/chat/completions`。
+/// 鉴权由 [`routes::bearer_auth`] 统一处理，健康检查免鉴权。
 pub fn router(state: TraeGatewayState) -> axum::Router {
     use axum::routing::{get, post};
     let body_limit = state.body_limit_bytes;
     axum::Router::new()
-        .route("/health", get(routes::health))
+        .merge(crate::health_routes(routes::health))
         .route("/status", get(routes::status))
         .route("/v1/models", get(routes::models))
         .route("/v1/chat/completions", post(routes::chat_completions))
@@ -751,6 +777,7 @@ impl crate::GatewayProduct for TraeGateway {
 
     const OWNED_PATHS: &'static [&'static str] = &[
         "/health",
+        "/healthz",
         "/status",
         "/v1/models",
         "/v1/chat/completions",
@@ -856,6 +883,7 @@ mod tests {
             "preferred_uid",
             "sticky_ttl_ms",
             "capture_enabled",
+            "max_mode",
         ]
         .into_iter()
         .collect();
@@ -866,6 +894,7 @@ mod tests {
     fn config_defaults_are_loopback_and_off_by_default() {
         let config = TraeGatewayConfig::default();
         assert!(!config.enabled, "默认不得自动开始监听");
+        assert!(config.max_mode, "Max Mode 默认开启（逐模型按目录上限）");
         assert_eq!(config.bind_addr, "127.0.0.1");
         assert!(!config.allow_non_loopback);
         assert_eq!(config.port, TRAE_DEFAULT_API_PORT);

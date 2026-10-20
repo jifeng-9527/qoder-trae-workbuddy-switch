@@ -193,15 +193,18 @@ flowchart TB
 
 **Três regras firmes** valem em todo o produto: os dados ficam nesta máquina, as credenciais são apenas gravadas no estado de login do cliente (sem login por procuração nem mudanças no protocolo do provedor) e toda gravação é precedida de backup.
 
-## Três formas
+## Quatro formas
 
 | Forma | Como obter | Observação |
 | --- | --- | --- |
 | **Aplicativo desktop** | Baixar o instalador em [GitHub Releases](https://github.com/NextAgentX/qoder-trae-workbuddy-switch/releases/latest) | Empacotado com Tauri; recomendado no dia a dia |
 | **webui** | Compilar do código-fonte (abaixo) | O mesmo bundle de frontend do app, servido por HTTP local |
+| **Docker** | Baixar a imagem pré-construída `ghcr.io/nextagentx/buddy-switch` (amd64 / arm64) | Dentro do contêiner roda o **servidor headless** (webui + gateways de API), **não** o alternador de desktop; veja [Implantação com Docker](docs/guides/DOCKER.md) |
 | **Demo online** | [GitHub Pages](https://nextagentx.github.io/qoder-trae-workbuddy-switch/) | Demo somente leitura; contas e uso são fictícios |
 
 > O pacote npm ainda não foi publicado, então `npm i -g` não o instala; para a forma webui use a compilação do código-fonte abaixo.
+>
+> A forma Docker é **somente servidor**: trocar o estado de login do cliente, iniciar o cliente, a bandeja e a janela flutuante exigem um **cliente gráfico na mesma máquina**, portanto nada disso funciona dentro do contêiner.
 
 ## Início rápido
 
@@ -400,8 +403,17 @@ src/                     # frontend: components / pages / lib / locales
 npm/                     # pacotes npm (não publicados)
 ```
 
-Requisitos de ambiente, processo de release e convenções de diretórios: [docs/guides/DEVELOPMENT.md](docs/guides/DEVELOPMENT.md).
-**Mapa completo da documentação: [docs/README.md](docs/README.md)** — guias / especificações atuais / histórico somente leitura / protótipo.
+## Documentação
+
+O índice completo está em [docs/README.md](docs/README.md) — por ciclo de vida: guias / especificações atuais / histórico somente leitura / protótipo. Os mais consultados:
+
+| Documento | O que cobre |
+| --- | --- |
+| [guides/DEVELOPMENT.md](docs/guides/DEVELOPMENT.md) | Requisitos, desenvolvimento local, lista de checagens, processo de release, convenções de diretórios |
+| [guides/DOCKER.md](docs/guides/DOCKER.md) | Implantação em contêiner: imagem pré-construída / compilação do código, portas e segurança, solução de problemas |
+| [guides/GATEWAY-CLIENT-INTEGRATION.md](docs/guides/GATEWAY-CLIENT-INTEGRATION.md) | Conectar Codex / Claude Code / outros clientes ao gateway local |
+| [specs/](docs/specs/) | Arquitetura e decisões atuais (leia antes de mexer no código) |
+| [policies/](docs/policies/) | Licença e aviso legal |
 
 ## Contribuindo
 

@@ -23,6 +23,7 @@ use buddy_switch_core::modules::{
     token_daily, token_stats, trae, travel, update, vscode_session,
 };
 use buddy_switch_gateway::unified::UnifiedGatewayConfig;
+use buddy_switch_gateway::GatewayProduct;
 use buddy_switch_gateway::{GatewayConfig, GatewayStatusView};
 
 // P9 · 悬浮窗**只读**数据模型 + provider（core）；两宿主同源。
@@ -2972,7 +2973,11 @@ async fn api_gateway_models(RawQuery(query): RawQuery) -> Response {
     let region = parse_region(query_value(query.as_deref(), "region").as_deref());
     let state = crate::gateway_host::shared_state();
     let snapshot = state.catalogs.current(region);
-    json_ok(serde_json::to_value(snapshot).unwrap_or(Value::Null))
+    let max_context = state.config.read().await.max_context;
+    json_ok(buddy_switch_gateway::routes::models::snapshot_view(
+        &snapshot,
+        max_context,
+    ))
 }
 
 async fn api_gateway_refresh_models(Json(body): Json<Value>) -> Response {
@@ -3844,8 +3849,10 @@ async fn api_trae_gateway_models(RawQuery(query): RawQuery) -> Response {
             ))
             .clone()
     };
+    buddy_switch_gateway::trae::catalog::ensure_fresh(variant).await;
+    let max_mode = buddy_switch_gateway::trae::TraeGateway::shared_state().max_mode_now();
     json_ok(buddy_switch_gateway::trae::payload::models_response_for(
-        variant, &disabled,
+        variant, &disabled, max_mode,
     ))
 }
 
@@ -5322,6 +5329,7 @@ mod tests {
                 "pool",
                 "allow_model_region_prefix",
                 "max_body_mb",
+                "max_context",
             ])
         );
 
@@ -6995,7 +7003,10 @@ async fn api_qoder_gateway_models(RawQuery(query): RawQuery) -> Response {
             .clone()
     };
     json_ok(buddy_switch_gateway::qoder::payload::admin_models_response(
-        region, &catalog, &disabled,
+        region,
+        &catalog,
+        &disabled,
+        state.max_context_now(),
     ))
 }
 

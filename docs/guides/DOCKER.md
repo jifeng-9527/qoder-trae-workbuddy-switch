@@ -23,22 +23,56 @@
 
 ## 快速开始
 
-```bash
-# 1) 构建镜像
-docker build -t buddy-switch:local .
-
-# 2) 启动（默认只发布到宿主机回环，见「安全」一节）
-docker compose up -d
-
-# 3) 打开 http://127.0.0.1:57890
-```
-
-启动日志会打印最终生效的监听地址。确认端口映射无误后：
+### 方式 A · 预构建镜像（推荐）
 
 ```bash
-docker compose logs -f
-docker compose down          # 停止（命名卷里的数据保留）
+docker run -d --name buddy-switch \
+  -p 127.0.0.1:57890:57890 \
+  -v buddy-switch-data:/data \
+  --restart unless-stopped \
+  ghcr.io/nextagentx/buddy-switch:latest
+# 打开 http://127.0.0.1:57890
 ```
+
+仓库根目录的 `docker-compose.yml` 默认也用这个镜像（`docker compose up -d`），
+它同时保留了 `build:` 作为回落：**先 pull，拉不到才 build**（Compose 的既定语义）。
+
+### 方式 B · 从源码构建
+
+```bash
+docker compose up -d --pull build     # 强制本地构建：忽略预构建镜像
+docker compose logs -f                # 看启动日志（会打印最终监听地址）
+docker compose down                   # 停止（命名卷里的数据保留）
+```
+
+`--pull build` 等价于 `docker compose build && docker compose up -d`。本地没有 GHCR
+访问条件（内网、离线、要改代码）时走这条。⚠️ 这条路包含 `npm ci` + 前端全量构建
+（含 `tsc` 与全部契约门禁）+ Rust release 全量编译，**很慢**。
+
+### 镜像标签
+
+| 标签 | 含义 |
+|:---|:---|
+| `latest` | 最近一次 **tag 发布**（不等于 `main` 最新代码） |
+| `2026.10.191740` | 与 Releases 的 tag 一一对应（去掉 `v` 前缀），镜像内 `buddy-switch version` 报告的就是它 |
+| `2026.10` | 该月的最后一次发布 |
+| `edge` | **手动触发**工作流构建的当前分支，只用于验证，不保证可用 |
+
+架构：`linux/amd64` + `linux/arm64`，同一个 tag 下是一条多架构 manifest list，
+`docker pull` 会按当前机器自动选。**没有** `arm/v7`（32 位 ARM 请自行改 Dockerfile 构建）。
+
+标签由 `.github/workflows/docker.yml` 在推 `v*` tag 时自动发布（两个架构各跑一台**原生**
+runner，再由 merge job 拼 manifest）。手动触发该工作流只产出 `edge`。
+
+### 镜像可见性
+
+本仓是公开仓库，包也按 **Public** 发布 —— 2026-10-19 实测匿名 token 可直接拉到 manifest
+（`ghcr.io/v2/nextagentx/buddy-switch/manifests/edge` 返回 200）。
+
+若某次之后 `docker pull` 报 `denied` / `unauthorized`，到
+`https://github.com/orgs/NextAgentX/packages/container/buddy-switch/settings`
+确认 Visibility 仍是 Public。改成 Private 也能用，只是每台机器都要先 `docker login ghcr.io`；
+而 `docker compose up -d` 拉不到时会**静默回落到本地构建**（看起来像「卡住了」）。
 
 ---
 
@@ -168,12 +202,33 @@ runtime  (debian:12) →  二进制 + ca-certificates + curl
 改 Rust 代码会触发全量重编（约几分钟）。要提速可挂载 `target/` 缓存或改用
 `cargo-chef`，但请先用 `scripts/check-docker.cjs` 确认没有破坏契约。
 
+### 发布路径（CI）
+
+`.github/workflows/docker.yml` 在推 `v*` tag 时自动发布 `ghcr.io/nextagentx/buddy-switch`：
+
+1. **版本戳只在 tag 触发时盖**（`stamp-version.sh --tag "$GITHUB_REF_NAME"`）：两个架构各跑一次，
+   但取值来自同一个 tag，结果一致。手动触发**不盖** —— `gen-release-notes.mjs` 是按 tag 取提交
+   区间的，时间戳版本在 git 里没有对应 ref，它只会打一条 warning 并**跳过写文件**，随后
+   `check:scope` 在 docker build 里红（错误信息只说「内置说明是 vA，应用版本是 vB」）。
+2. `build` 在两个**原生** runner 上构建（`ubuntu-latest` = amd64、`ubuntu-24.04-arm` = arm64），
+   各自 `push-by-digest` 推一个无名 digest。**不用 QEMU**：Rust release 编译在模拟下慢一个
+   数量级，而本项目 `rusqlite` 走 `bundled`，等于用模拟器再编一份 SQLite 的 C 源码。
+3. `merge` 用 `docker buildx imagetools create` 把两个 digest 拼成 manifest list，再打 tag。
+   ⚠️ 同一个 tag 不能由两个 job 各推一次，否则后到的会覆盖先到的、`latest` 只剩一个架构。
+
+镜像名是**字符串契约**，同时出现在本文件、`README*.md`、`docker-compose.yml` 与 workflow 里；
+`npm run check:docker` 会校验四处一致（`.github` 不在 docker 构建上下文里，那一侧会自动跳过）。
+
 ---
 
 ## 排障
 
 | 症状 | 原因 | 处理 |
 |:---|:---|:---|
+| `up -d` 不下载镜像、直接开始**编译**（几分钟后才起来） | 预构建镜像没拉到（包私有 / 网络不通 / 该 tag 还没发布），Compose 回落成本地构建 | 先单独 `docker pull ghcr.io/nextagentx/buddy-switch:latest` 看真实报错；私有包需 `docker login ghcr.io`，或把包改成 Public |
+| `docker pull` 报 `denied` / `unauthorized` | 包被改成 Private；或登录用的 Token 没有 `read:packages` | 见「镜像可见性」一节 |
+| `no matching manifest for linux/arm/v7` | 只发布了 `amd64` / `arm64` | 32 位 ARM 自行 `docker compose up -d --pull build` 本地构建 |
+| 镜像版本与 tag 对不上 | 用了 `latest`，而它不是这次的 tag | 显式拉 `ghcr.io/nextagentx/buddy-switch:<版本>` |
 | 容器起来后**立刻退出**，日志说「拒绝启动」 | `BUDDY_SWITCH_HOME` 不存在 / 非绝对路径 / 无写权限 | 检查卷挂载与属主（见「数据持久化」） |
 | 宿主访问不到 `57890` | 容器内仍绑 `127.0.0.1` | 确认 `BUDDY_SWITCH_HOST=0.0.0.0` 已生效 |
 | 页面 **404** 或空白 | 前端没编进二进制 | 检查构建顺序；`docker build` 有无跳过阶段 1 |

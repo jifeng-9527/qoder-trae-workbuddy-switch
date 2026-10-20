@@ -239,22 +239,24 @@ async fn body_text(response: Response) -> String {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn health_needs_no_authorization() {
+async fn health_paths_need_no_authorization() {
     let _guard = guard();
     let home = isolated_home("health", &[("uid-a", "jwt-a")]);
     let (state, _key) = gateway_for(Behavior::Normal).await;
 
-    let response = router(state)
-        .oneshot(
-            Request::builder()
-                .uri("/health")
-                .body(Body::empty())
-                .expect("构造请求"),
-        )
-        .await
-        .expect("路由调用");
-
-    assert_eq!(response.status(), StatusCode::OK, "/health 必须免鉴权");
+    // canonical `/health` + 兼容别名 `/healthz`：两者都必须免鉴权且 200。
+    for path in buddy_switch_gateway::HEALTH_PATHS {
+        let response = router(state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .body(Body::empty())
+                    .expect("构造请求"),
+            )
+            .await
+            .expect("路由调用");
+        assert_eq!(response.status(), StatusCode::OK, "{path} 必须免鉴权");
+    }
     let _ = std::fs::remove_dir_all(&home);
 }
 
@@ -956,21 +958,59 @@ fn models_request(key: &str) -> Request<Body> {
 }
 
 /// 取 `/v1/models` 返回的模型 id 列表（走真实路由 + 鉴权中间件）。
-async fn models_ids(app: &axum::Router, key: &str) -> Vec<String> {
+async fn models_json(app: &axum::Router, key: &str) -> serde_json::Value {
     let response = app
         .clone()
         .oneshot(models_request(key))
         .await
         .expect("请求应完成");
     assert_eq!(response.status(), StatusCode::OK, "/v1/models 应 200");
-    let value: serde_json::Value =
-        serde_json::from_str(&body_text(response).await).expect("响应应为 JSON");
-    value["data"]
+    serde_json::from_str(&body_text(response).await).expect("响应应为 JSON")
+}
+
+async fn models_ids(app: &axum::Router, key: &str) -> Vec<String> {
+    models_json(app, key).await["data"]
         .as_array()
         .expect("data 应为数组")
         .iter()
         .filter_map(|model| model["id"].as_str().map(str::to_string))
         .collect()
+}
+
+/// ★ Max Mode 的对外表现（issue #53 三版）：清单里**一个模型只有一条记录**，
+/// 不再有 `<模型>-max` 影子条目；窗口数字来自官方目录（本用例没有目录缓存 ⇒
+/// 回落到客户端清单，只验「不虚报、不产生影子 id」这两条硬约束）。
+///
+/// 目录驱动的数字口径由 `payload` 的单测钉住（`catalog_decides_per_model_window_...`）。
+#[tokio::test]
+async fn max_mode_has_no_shadow_ids() {
+    let _guard = guard();
+    let home = isolated_home("max-mode", &[("uid-mm", "jwt-mm")]);
+    let key = create_key(&home, TraeVariant::default());
+    let app = router(TraeGatewayState::new(TraeGatewayConfig::default()));
+
+    let body = models_json(&app, &key).await;
+    let rows = body["data"].as_array().expect("data 应为数组");
+    let ids: Vec<&str> = rows.iter().filter_map(|row| row["id"].as_str()).collect();
+
+    assert!(
+        ids.contains(&"glm-5.3"),
+        "静态兜底清单必须有 glm-5.3：{ids:?}"
+    );
+    assert!(
+        !ids.iter()
+            .any(|id| id.ends_with("-max") && *id != "qwen3.8-max"),
+        "不得出现 `-max` 影子条目：{ids:?}"
+    );
+    let glm = rows.iter().find(|row| row["id"] == "glm-5.3").unwrap();
+    // CI 里没有 Trae 客户端库 ⇒ 走静态兜底（窗口 = 兜底常量）；本地有客户端时是 200k。
+    // 这里只要求「必须是正数、不能是 null」—— 具体数字由目录/客户端决定，不是本用例的判据。
+    assert!(
+        glm["context_length"].as_i64().unwrap_or(0) > 0,
+        "没有目录时也要给出一个正数窗口，不能是 0/null：{glm:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&home);
 }
 
 /// ★★ P11 **路由级**端到端：被禁用的模型**真的**不在 `/v1/models`，且**真的**被调用拒绝（403）。
@@ -1023,6 +1063,8 @@ async fn p11_disabled_model_is_hidden_from_models_and_rejected_on_call() {
         !after.iter().any(|id| id == target),
         "禁用后不应出现在 /v1/models：{after:?}"
     );
+    // Max Mode 是**策略**（`is_max_mode` 注入），不再产生影子条目 ⇒ 一个模型一条记录，
+    // 禁用后正好少一条。
     assert_eq!(after.len() + 1, before.len(), "禁用后应正好少一条");
 
     // 出口②：硬调用真的回 403 `model_disabled`（在触达上游之前就拒）。

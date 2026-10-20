@@ -630,12 +630,12 @@ const GATEWAY = {
     /* available = 上游事实（能不能调）；disabled = 用户偏好（主动拿掉）。
        两者**正交**，四种组合都合法 —— UI 必须能区分「已禁用」与「上游不可用」。 */
     models: [
-      { name: "claude-sonnet-4.5", provider: "anthropic", scope: "国内版", available: true },
-      { name: "claude-opus-4.1", provider: "anthropic", scope: "国内版", available: true, disabled: true },
-      { name: "gpt-5-codex", provider: "openai", scope: "国内版", available: true },
-      { name: "gemini-2.5-pro", provider: "openai", scope: "国内版", available: true },
-      { name: "claude-sonnet-4.5", provider: "anthropic", scope: "国际版", available: true },
-      { name: "gpt-5-codex", provider: "openai", scope: "国际版", available: false, disabled: true },
+      { name: "claude-sonnet-4.5", provider: "anthropic", scope: "国内版", available: true, context: 200000, maxWindow: 200000 },
+      { name: "claude-opus-4.1", provider: "anthropic", scope: "国内版", available: true, disabled: true, context: 200000, maxWindow: 200000 },
+      { name: "gpt-5-codex", provider: "openai", scope: "国内版", available: true, context: 400000, maxWindow: 1000000 },
+      { name: "gemini-2.5-pro", provider: "openai", scope: "国内版", available: true, context: 300000, maxWindow: 1000000 },
+      { name: "claude-sonnet-4.5", provider: "anthropic", scope: "国际版", available: true, context: 200000, maxWindow: 200000 },
+      { name: "gpt-5-codex", provider: "openai", scope: "国际版", available: false, disabled: true, context: 400000, maxWindow: 1000000 },
     ],
     /* 模型清单的来源（§3.17）：实时 / 已保存 / 内置 —— 三级都必须显式标注，
        不许把「内置」伪装成「实时」（用户照着清单调用会扑空）。 */
@@ -670,10 +670,18 @@ const GATEWAY = {
       /* 已吊销（同 wb-cn 的 k2）：两平台各留一条，确认「恢复 + 删除」在两边同形。 */
       { id: "k6", name: "TraeCode Key", masked: "ts_live_e310••••••••••••9c77", scope: "国内版", created: "2026-09-26", lastUsed: "40 分钟前", requests: 254, revoked: true },
     ],
+    /* 用**真实模型名**与**真实目录数值**（2026-10-19 `batch_get_detail_param` 实测）：
+       `context` = `__dev` 通道实际窗口，`maxWindow` = Max Mode 上限（不存在为 null）。
+       ★ 上限不是统一 1M：mimo 是 981504、Doubao-Turbo 与默认相同。 */
     models: [
-      { name: "chat_v3", provider: "trae", scope: "TraeCode", available: true },
-      { name: "solo_work_lite", provider: "trae", scope: "TraeWork", available: true },
-      { name: "trae-code-pro", provider: "trae", scope: "TraeCode", available: true },
+      { name: "glm-5.3", provider: "trae", scope: "TraeWork", available: true, context: 200000, maxWindow: 1000000 },
+      { name: "qwen3.8-max", provider: "trae", scope: "TraeWork", available: true, context: 200000, maxWindow: 1000000 },
+      { name: "Doubao-Seed-Evolving", provider: "trae", scope: "TraeWork", available: true, context: 256000, maxWindow: 1000000 },
+      { name: "Doubao-Seed-2.1-Turbo", provider: "trae", scope: "TraeWork", available: true, context: 256000, maxWindow: 256000 },
+      { name: "mimo-v2.6-pro", provider: "trae", scope: "TraeCode", available: true, context: 200000, maxWindow: 981504 },
+      { name: "kimi-k3", provider: "trae", scope: "TraeCode", available: true, context: 200000, maxWindow: 1000000 },
+      /* 目录里没有这个模型 ⇒ 数字未知，清单只按客户端默认窗口声明。 */
+      { name: "kimi-k2.6", provider: "trae", scope: "TraeCode", available: true, context: 200000, maxWindow: null },
     ],
     /* Trae 侧按**程序位**分家下发清单（TraeWork=solo_work_lite / TraeCode=chat_v3），
        所以识别也必须按 scope 分家，不能一份清单打天下。 */
@@ -704,10 +712,10 @@ const GATEWAY = {
       { id: "k8", name: "Qoder CLI", masked: "qd_live_9a07••••••••••••4e83", scope: "国内版", created: "2026-10-02", lastUsed: "2 小时前", requests: 214, revoked: true },
     ],
     models: [
-      { name: "Qwen3.8-Max", provider: "qoder", scope: "国内版", available: true },
-      { name: "GLM-5.1", provider: "qoder", scope: "国内版", available: true },
-      { name: "Kimi-K3", provider: "qoder", scope: "国内版", available: true, disabled: true },
-      { name: "MiniMax-M3", provider: "qoder", scope: "国内版", available: true },
+      { name: "Qwen3.8-Max", provider: "qoder", scope: "国内版", available: true, context: 200000, maxWindow: 1000000 },
+      { name: "GLM-5.1", provider: "qoder", scope: "国内版", available: true, context: 200000, maxWindow: 1000000 },
+      { name: "Kimi-K3", provider: "qoder", scope: "国内版", available: true, disabled: true, context: 200000, maxWindow: 1000000 },
+      { name: "MiniMax-M3", provider: "qoder", scope: "国内版", available: true, context: 200000, maxWindow: 400000 },
       /* 区域独占模型（国际版独有）也列出来 —— 与 WB 网关页的跨区域清单同形，
          用来暴露「Key 出口与模型区域不匹配」这个真实存在的错配。 */
       { name: "Ultimate", provider: "qoder", scope: "国际版", available: true },

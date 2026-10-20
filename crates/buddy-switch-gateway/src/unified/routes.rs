@@ -1,4 +1,4 @@
-//! 统一网关的处理器（当前挂 `/healthz` · `/status` · `/v1/models`）。
+//! 统一网关的处理器（当前挂 `/health`（兼容 `/healthz`）· `/status` · `/v1/models`）。
 //!
 //! # 不合并 router，只合并**入口**
 //!
@@ -14,6 +14,7 @@
 //! 未挂的业务端点（`/v1/chat/completions` / `/v1/messages` / `/v1/responses` / `/biz/*path`）
 //! 要等 P3 抽 `pub(crate) relay_*` —— 见 `docs/specs/UNIFIED-GATEWAY-ARCH.md` §7。
 
+use crate::GatewayProduct;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, StatusCode};
@@ -29,8 +30,9 @@ use super::state::UnifiedGatewayState;
 use crate::disabled_models::is_disabled;
 use crate::routes::json_response;
 
-/// `GET /healthz`：存活探针，**免鉴权**（与 WB 网关同名同义）。
-pub async fn healthz(State(state): State<UnifiedGatewayState>) -> Response {
+/// `GET /health`：存活探针，**免鉴权**（与 WB 网关同名同义；`/healthz` 是兼容别名，
+/// 两个路径由 [`crate::health_routes`] 挂到**同一个**处理器上）。
+pub async fn health(State(state): State<UnifiedGatewayState>) -> Response {
     let config = state.config_snapshot().await;
     let keys = state.keys.list();
     json_response(
@@ -648,6 +650,7 @@ async fn collect_namespace_models(
                     let _ = crate::catalog_probe::probe_region(&wb, region).await;
                 }
                 let snapshot = wb.catalogs.current(region);
+                let wb_max_context = wb.config.read().await.max_context;
                 let models = snapshot
                     .models
                     .iter()
@@ -660,18 +663,11 @@ async fn collect_namespace_models(
                         )
                     })
                     .map(|model| {
-                        json!({
-                            "id": model.id,
-                            "object": "model",
-                            "namespace": spec.id,
-                            "owned_by": "workbuddy",
-                            "context_window": model.context_window,
-                            "max_tokens": model.max_tokens,
-                            "supports_images": model.supports_images,
-                            "credits": model.credits,
-                            "badges": model.badges,
-                            "free": model.free,
-                        })
+                        let mut entry = crate::routes::models::model_entry(model, wb_max_context);
+                        if let Some(object) = entry.as_object_mut() {
+                            object.insert("namespace".into(), json!(spec.id));
+                        }
+                        entry
                     })
                     .collect();
                 NamespaceModels {
@@ -683,15 +679,19 @@ async fn collect_namespace_models(
                 }
             }
             RelayTarget::Trae(variant) => {
+                // 官方目录（逐模型 dev/max）：过期先同步；失败静默沿用旧缓存。
+                crate::trae::catalog::ensure_fresh(variant).await;
                 let list =
                     buddy_switch_core::modules::trae::model_list::read_client_model_list(variant);
                 // 客户端拉过清单 ⇒ 视作「实时」（它的新鲜度 = 客户端最后一次刷新）
                 let from_client = !list.groups.is_empty();
+                let max_mode = crate::trae::TraeGateway::shared_state().max_mode_now();
                 let models = crate::trae::payload::models_response_for(
                     variant,
                     trae_disabled.get(buddy_switch_core::modules::product::scope_of_trae_region(
                         variant.region(),
                     )),
+                    max_mode,
                 )
                 .get("data")
                 .and_then(|data| data.as_array())
@@ -725,12 +725,15 @@ async fn collect_namespace_models(
                 let scope = buddy_switch_core::modules::product::scope_of_qoder_region(region);
                 let disabled_store = crate::disabled_models::shared();
                 let disabled = disabled_store.read().await;
-                let models =
-                    crate::qoder::payload::models_response(&catalog.models, disabled.get(scope))
-                        .get("data")
-                        .and_then(|data| data.as_array())
-                        .cloned()
-                        .unwrap_or_default();
+                let models = crate::qoder::payload::models_response(
+                    &catalog.models,
+                    disabled.get(scope),
+                    qoder.max_context_now(),
+                )
+                .get("data")
+                .and_then(|data| data.as_array())
+                .cloned()
+                .unwrap_or_default();
                 drop(disabled);
                 NamespaceModels {
                     namespace: spec.id,

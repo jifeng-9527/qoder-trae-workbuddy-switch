@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CatalogSourceBar } from "@/components/gateway/catalog-source-bar";
+import { ContextSourceCard } from "@/components/gateway/context-source-card";
 import { ModelTable } from "@/components/gateway/model-table";
 import { focusProbeModel, PROBE_LIMIT_STATES } from "@/components/gateway/model-probe-card";
 import * as api from "@/lib/api";
@@ -69,6 +70,14 @@ export function ModelList({ region, className }: { region: Region; className?: s
   const disabledSet = useGatewayStore((s) => s.disabled[scope]) ?? EMPTY_DISABLED_SET;
   const loadDisabled = useGatewayStore((s) => s.loadDisabled);
   const setModelDisabled = useGatewayStore((s) => s.setModelDisabled);
+  const config = useGatewayStore((s) => s.config);
+  const saveConfig = useGatewayStore((s) => s.saveConfig);
+  const loadModels = useGatewayStore((s) => s.loadModels);
+  /**
+   * 开关的本地草案值：点击立刻生效（不等保存 / 回读）。
+   * 保存或浅读结束后清空，之后以 store 配置为准。
+   */
+  const [maxContextDraft, setMaxContextDraft] = useState<boolean | null>(null);
   /* 限流探测：与探测卡读**同一份**派生数据（`probe.cells` 实测 + `useProbePassive()` 被动底色）。 */
   const status = useGatewayStore((s) => s.status);
   const probe = useGatewayStore((s) => s.probe);
@@ -91,8 +100,12 @@ export function ModelList({ region, className }: { region: Region; className?: s
         // WB 无「非可服务」概念：在清单里即可用（决策 #3）。
         available: true,
         disabled: disabledSet.has(model.id),
+        // 本地按开关选档（后端两档原值都在）：点开关立即变，不等重取。
+        context_window: (maxContextDraft ?? config.max_context)
+          ? (model.context_length_max ?? model.context_window)
+          : (model.context_window_default ?? model.context_window),
       })),
-    [snapshot, disabledSet, scope],
+    [snapshot, disabledSet, scope, config.max_context, maxContextDraft],
   );
   const { served, total } = servedCount(rows);
 
@@ -200,6 +213,7 @@ export function ModelList({ region, className }: { region: Region; className?: s
 
   const labels = {
     colModel: t("shared.gateway.models.colModel"),
+    colContext: t("shared.gateway.models.colContext"),
     colUpstream: t("shared.gateway.models.colUpstream"),
     colExposed: t("shared.gateway.models.colExposed"),
     upstreamAvailable: t("shared.gateway.models.upstreamAvailable"),
@@ -254,6 +268,21 @@ export function ModelList({ region, className }: { region: Region; className?: s
     <div className={cn(className)}>
       {/* 无卡头 —— 分区名由左栏导航承担（与 Trae / Qoder 侧同口径）。
           版本也不在这里显示 / 切换：页头切换器是唯一入口。 */}
+      <ContextSourceCard
+        checked={maxContextDraft ?? config.max_context}
+        onChange={(checked) => {
+          setMaxContextDraft(checked);
+          void (async () => {
+            try {
+              await saveConfig({ ...config, max_context: checked });
+              // 清单数字按开关选档 ⇒ 保存后浅读一次（不强制打上游）。
+              await loadModels(region);
+            } finally {
+              setMaxContextDraft(null);
+            }
+          })();
+        }}
+      />
       <CatalogSourceBar
         view={view}
         scanning={refreshing}

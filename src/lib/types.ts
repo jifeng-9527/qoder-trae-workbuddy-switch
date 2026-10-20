@@ -966,6 +966,10 @@ export interface ScheduleConfig {
   trae_checkin_times: string[];
   /** Trae 账号 JWT 自动续期的时点（第二条产品线）。 */
   trae_jwt_refresh_times: string[];
+  /** Qoder 自动签到的时点（第三条产品线，签的是 Qoder 自己的双区账号库）。 */
+  qoder_checkin_times: string[];
+  /** Qoder 账号令牌保活的时点（第三条产品线）。 */
+  qoder_keepalive_times: string[];
   /**
    * 抖动幅度（分钟，`0` = 关闭）。每次触发在时点前后**确定性**随机偏移至多这么多分钟。
    *
@@ -981,6 +985,8 @@ export interface ScheduleConfig {
   cat_jitter_minutes: number;
   trae_checkin_jitter_minutes: number;
   trae_jwt_refresh_jitter_minutes: number;
+  qoder_checkin_jitter_minutes: number;
+  qoder_keepalive_jitter_minutes: number;
   /** 自动签到开关（签 WorkBuddy 的账号）。 */
   checkin_enabled: boolean;
   /** 派猫猫旅行开关。 */
@@ -1010,6 +1016,21 @@ export interface ScheduleConfig {
    * 账号静默过期、网关调用突然 401。用户仍可在此关掉。
    */
   trae_jwt_refresh_enabled: boolean;
+  /**
+   * Qoder 自动签到开关（签 Qoder 的双区账号库）。
+   *
+   * ⚠️ **默认 `false`**，判据与 `trae_checkin_enabled` **同源**：它是替用户去上游领东西，
+   * 用户没要求过 ⇒ opt-in。
+   */
+  qoder_checkin_enabled: boolean;
+  /**
+   * Qoder 账号令牌保活开关（到期前提前刷新）。
+   *
+   * ⚠️ **默认 `true`**，判据与 `trae_jwt_refresh_enabled` **同源**：`refresh_token` 的
+   * 唯一用途就是续期，而它是用户导入/登录账号时自己交出来的 —— 默认关掉等于让账号
+   * 静默过期、网关调用突然 401。
+   */
+  qoder_keepalive_enabled: boolean;
   /** 活跃上报每账号每天的对话次数（后端将 0 / 负数归一为 1）。 */
   activity_report_count: number;
 }
@@ -1495,6 +1516,8 @@ export interface GatewayConfig {
   log_keep: number;
   log_bodies: boolean;
   per_key_rate_limit?: number | null;
+  /** 上下文上限策略（默认 true）：清单声明上游上限窗口；false ⇒ 默认窗口。 */
+  max_context: boolean;
 }
 
 /**
@@ -1646,6 +1669,10 @@ export interface CatalogModel {
   id: string;
   name: string;
   context_window: number;
+  /** 默认档（上游 `contextWindow.defaultLength`）；缺省 = 没有默认档。 */
+  context_window_default?: number | null;
+  /** 上限档（后端 `snapshot_view` 输出；与 `context_window` 在旧响应里同值）。 */
+  context_length_max?: number | null;
   max_tokens: number;
   supports_images: boolean;
   credits?: string | null;
@@ -1690,6 +1717,11 @@ export interface GatewayModelRow {
   available: boolean;
   /** 用户偏好：是否被禁用（来自后端存储）。 */
   disabled: boolean;
+  /**
+   * 上下文窗口（token）：WB 取官方目录 `context_window`；Qoder 取 `max_input_tokens`；
+   * Trae 取官方目录的 `dev/max`（由 `/v1/models` 给出）。未知 / 不适用为 `null`。
+   */
+  context_window?: number | null;
 }
 
 /**

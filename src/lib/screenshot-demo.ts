@@ -715,6 +715,7 @@ function demoGatewayConfig(): GatewayConfig {
     log_keep: 200,
     log_bodies: false,
     per_key_rate_limit: null,
+    max_context: true,
   };
 }
 
@@ -2305,6 +2306,7 @@ function demoTraeGatewayConfig(): TraeGatewayConfigRaw {
     sticky_ttl_ms: 30 * 60 * 1000,
     // 抓取旁路默认关：演示站也不该呈现「已开启诊断抓取」的假状态。
     capture_enabled: false,
+    max_mode: true,
   };
 }
 
@@ -2835,6 +2837,8 @@ export function screenshotDemoResponse(command: string, args?: Record<string, un
       cat_times: ["01:00"],
       trae_checkin_times: ["09:00", "21:00"],
       trae_jwt_refresh_times: ["09:00", "21:00"],
+      qoder_checkin_times: ["09:00", "21:00"],
+      qoder_keepalive_times: ["22:00"],
       // 签到开 ±15 分钟抖动：截图要能自证「这个能力存在且真的在界内」，
       // 全为 0 的话控件看起来就只是个永远不动的下拉框。
       checkin_jitter_minutes: 15,
@@ -2845,6 +2849,8 @@ export function screenshotDemoResponse(command: string, args?: Record<string, un
       cat_jitter_minutes: 0,
       trae_checkin_jitter_minutes: 0,
       trae_jwt_refresh_jitter_minutes: 0,
+      qoder_checkin_jitter_minutes: 0,
+      qoder_keepalive_jitter_minutes: 0,
       checkin_enabled: true,
       travel_enabled: true,
       activity_enabled: true,
@@ -2856,6 +2862,9 @@ export function screenshotDemoResponse(command: string, args?: Record<string, un
       trae_checkin_enabled: false,
       // 与后端默认值一致（Trae JWT 续期**默认开启**，与上面那条方向相反）。
       trae_jwt_refresh_enabled: true,
+      // Qoder 两条同样照后端默认值（签到关、保活开）。
+      qoder_checkin_enabled: false,
+      qoder_keepalive_enabled: true,
       activity_report_count: 5,
     } satisfies ScheduleConfig;
     case "get_auto_rotate_config": return config;
